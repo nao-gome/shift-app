@@ -8,3 +8,5 @@ player_images/
 
 # パスワード設定フォルダ
 .streamlit/
+
+physical_tests.csv
