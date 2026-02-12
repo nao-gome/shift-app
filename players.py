@@ -9,7 +9,7 @@ import hashlib
 
 # --- 0. セキュリティ関数 ---
 def hash_password(password):
-    """パスワードをSHA-256でハッシュ化（暗号化）する"""
+    """パスワードをSHA-256でハッシュ化して保護"""
     return hashlib.sha256(str(password).encode()).hexdigest()
 
 # --- 1. ページ設定 ---
@@ -22,7 +22,7 @@ def get_base64_image(image_path):
         return base64.b64encode(data).decode()
     return None
 
-# カスタムCSS（デザイン・色の制御）
+# カスタムCSS
 st.markdown("""
     <style>
     header[data-testid="stHeader"] { display: none !important; }
@@ -52,13 +52,15 @@ st.markdown("""
         background-color: #ffffff; padding: 12px; border-radius: 10px;
         box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 8px; border-top: 4px solid #01579b;
     }
+    .bmi-box {
+        margin-bottom: 20px; padding: 20px; background: #e3f2fd; border-radius: 12px; 
+        border: 2px solid #01579b; box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    }
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. データ準備 ---
-MASTER_FILE = "player_master.csv"
-CONDITION_FILE = "daily_condition.csv"
-PHYSICAL_FILE = "physical_tests.csv"
+# --- 2. データロード ---
+MASTER_FILE, CONDITION_FILE, PHYSICAL_FILE = "player_master.csv", "daily_condition.csv", "physical_tests.csv"
 IMAGE_DIR = "player_images"
 if not os.path.exists(IMAGE_DIR): os.makedirs(IMAGE_DIR)
 
@@ -67,20 +69,13 @@ if os.path.exists(MASTER_FILE):
     if not df_players.empty and len(str(df_players.iloc[0]["パスワード"])) != 64:
         df_players["パスワード"] = df_players["パスワード"].apply(hash_password)
         df_players.to_csv(MASTER_FILE, index=False, encoding="utf-8-sig")
-else:
-    df_players = pd.DataFrame(columns=["背番号", "名前", "ポジション", "学年", "身長", "体重", "画像パス", "パスワード"])
+else: df_players = pd.DataFrame(columns=["背番号", "名前", "ポジション", "学年", "身長", "体重", "画像パス", "パスワード"])
 
-if os.path.exists(CONDITION_FILE):
-    df_cond = pd.read_csv(CONDITION_FILE)
-    df_cond["日付"] = pd.to_datetime(df_cond["日付"]).dt.date
-else:
-    df_cond = pd.DataFrame(columns=["日付", "名前", "体重", "疲労度", "睡眠の質", "怪我痛み", "痛み詳細"])
+df_cond = pd.read_csv(CONDITION_FILE) if os.path.exists(CONDITION_FILE) else pd.DataFrame(columns=["日付", "名前", "体重", "疲労度", "睡眠の質", "怪我痛み", "痛み詳細"])
+if not df_cond.empty: df_cond["日付"] = pd.to_datetime(df_cond["日付"]).dt.date
 
-if os.path.exists(PHYSICAL_FILE):
-    df_phys = pd.read_csv(PHYSICAL_FILE)
-    df_phys["日付"] = pd.to_datetime(df_phys["日付"]).dt.date
-else:
-    df_phys = pd.DataFrame(columns=["日付", "名前", "テスト種目", "数値"])
+df_phys = pd.read_csv(PHYSICAL_FILE) if os.path.exists(PHYSICAL_FILE) else pd.DataFrame(columns=["日付", "名前", "テスト種目", "数値"])
+if not df_phys.empty: df_phys["日付"] = pd.to_datetime(df_phys["日付"]).dt.date
 
 COLOR_MAP = {"睡眠の質": "#1f77b4", "疲労度": "#d62728"} #
 PHYS_TESTS = ["30mスプリント (秒)", "プロアジリティ (秒)", "垂直跳び (cm)", "Yo-Yoテスト (m)"]
@@ -91,7 +86,7 @@ if "user_name" not in st.session_state: st.session_state.user_name = None
 if "show_form" not in st.session_state: st.session_state.show_form = None
 if "selected_player_name" not in st.session_state: st.session_state.selected_player_name = None
 
-# --- 3. ログイン画面 ---
+# --- 3. ログイン ---
 if not st.session_state.authenticated:
     st.markdown('<div class="full-width-header"><h1>⚽ LOGIN</h1></div>', unsafe_allow_html=True)
     with st.container(border=True):
@@ -99,174 +94,155 @@ if not st.session_state.authenticated:
         u_pw = st.text_input("パスワード", type="password")
         if st.button("ログイン", width="stretch"):
             if u_id == "admin" and u_pw == st.secrets.get("admin_password", "admin123"):
-                st.session_state.authenticated = True; st.session_state.user_role = "admin"; st.session_state.user_name = "管理者"; st.rerun()
-            hashed_input = hash_password(u_pw)
-            pm = df_players[(df_players["名前"] == u_id) & (df_players["パスワード"].astype(str) == hashed_input)]
+                st.session_state.authenticated, st.session_state.user_role, st.session_state.user_name = True, "admin", "管理者"; st.rerun()
+            h_pw = hash_password(u_pw)
+            pm = df_players[(df_players["名前"] == u_id) & (df_players["パスワード"].astype(str) == h_pw)]
             if not pm.empty:
-                st.session_state.authenticated = True; st.session_state.user_role = "player"; st.session_state.user_name = u_id; st.rerun()
+                st.session_state.authenticated, st.session_state.user_role, st.session_state.user_name = True, "player", u_id; st.rerun()
             else: st.error("ログイン情報が正しくありません")
     st.stop()
 
 # --- 4. 共通ヘッダー ---
 st.markdown(f'<div class="full-width-header"><h1>⚽ {st.session_state.user_name} モード</h1></div>', unsafe_allow_html=True)
 
+# --- 5. サイドバー (管理者機能) ---
 with st.sidebar:
     st.write(f"👤: **{st.session_state.user_name}**")
-    if st.button("ログアウト", key="logout_btn"): st.session_state.authenticated = False; st.rerun()
+    if st.button("ログアウト", key="lo_btn"): st.session_state.authenticated = False; st.rerun()
     st.divider()
-    
     if st.session_state.user_role == "admin" and not df_players.empty:
         st.header("🛠️ 選手・テスト管理")
         plist = df_players["名前"].tolist()
         s_idx = plist.index(st.session_state.selected_player_name) if st.session_state.selected_player_name in plist else 0
         edit_target = st.selectbox("選手を選択", plist, index=s_idx)
         st.session_state.selected_player_name = edit_target
-        target_row = df_players[df_players["名前"] == edit_target].iloc[0]
+        row = df_players[df_players["名前"] == edit_target].iloc[0]
         
-        # 【修正】プロフィール修正項目を5項目に拡大
-        with st.expander("📝 選手プロフィール修正"):
-            with st.form("edit_master_full"):
-                e_na = st.text_input("名前", value=target_row["名前"])
-                e_no = st.number_input("背番号", value=int(target_row["背番号"]))
-                e_hi = st.number_input("身長 (cm)", value=float(target_row["身長"]))
-                e_we = st.number_input("体重 (kg)", value=float(target_row["体重"]))
-                e_pw = st.text_input("新PW（変更時のみ入力）", placeholder="未入力ならそのまま")
+        with st.expander("📝 プロフィール修正(5項目)"):
+            with st.form("edit_p"):
+                e_na = st.text_input("名前", row["名前"])
+                e_no = st.number_input("背番号", value=int(row["背番号"]))
+                e_hi = st.number_input("身長 (cm)", value=float(row["身長"]))
+                e_we = st.number_input("体重 (kg)", value=float(row["体重"]))
+                e_pw = st.text_input("新パスワード(変更時のみ)")
                 if st.form_submit_button("選手情報を更新"):
                     idx = df_players[df_players["名前"] == edit_target].index[0]
-                    final_pw = hash_password(e_pw) if e_pw else target_row["パスワード"]
-                    df_players.loc[idx, ["名前", "背番号", "身長", "体重", "パスワード"]] = [e_na, e_no, e_hi, e_we, final_pw]
+                    final_pw = hash_password(e_pw) if e_pw else row["パスワード"]
+                    df_players.loc[idx, ["名前","背番号","身長","体重","パスワード"]] = [e_na, e_no, e_hi, e_we, final_pw]
                     df_players.to_csv(MASTER_FILE, index=False, encoding="utf-8-sig"); st.rerun()
-
+        
         with st.expander("🏆 フィジカルテスト記録"):
-            with st.form("add_phys_form"):
-                t_type = st.selectbox("種目", PHYS_TESTS)
-                t_val = st.number_input("数値", step=0.01)
-                t_date = st.date_input("測定日", value=date.today())
+            with st.form("add_ph"):
+                t_t, t_v, t_d = st.selectbox("種目", PHYS_TESTS), st.number_input("計測数値", step=0.01), st.date_input("測定日")
                 if st.form_submit_button("記録を保存"):
-                    new_p = {"日付": t_date, "名前": edit_target, "テスト種目": t_type, "数値": t_val}
-                    df_phys = pd.concat([df_phys, pd.DataFrame([new_p])], ignore_index=True)
-                    df_phys.to_csv(PHYSICAL_FILE, index=False, encoding="utf-8-sig"); st.success("保存しました！"); st.rerun()
+                    new_ph = pd.DataFrame([{"日付": t_d, "名前": edit_target, "テスト種目": t_t, "数値": t_v}])
+                    df_phys = pd.concat([df_phys, new_ph], ignore_index=True); df_phys.to_csv(PHYSICAL_FILE, index=False); st.success("保存完了"); st.rerun()
 
-# --- 5. メインコンテンツ ---
-
+# --- 6. メインコンテンツ ---
 if st.session_state.user_role == "admin":
-    # --- 管理者ビュー (タブ順修正) ---
+    # 管理者ビュー
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("➕\n新規選手登録", width="stretch"): st.session_state.show_form = "p"; st.rerun()
+        if st.button("➕ 新規選手登録", width="stretch"): st.session_state.show_form = "p"; st.rerun()
     with col2:
-        if st.button("📝\n体調データ入力", width="stretch"): st.session_state.show_form = "c"; st.rerun()
-
+        if st.button("📝 体調代行入力", width="stretch"): st.session_state.show_form = "c"; st.rerun()
+    
     if st.session_state.show_form == "p":
-        with st.form("new_p", clear_on_submit=True):
-            st.subheader("👤 選手新規登録")
-            c1, c2 = st.columns(2)
-            with c1:
-                n_na = st.text_input("名前"); n_no = st.number_input("背番号", 1, 99); n_pw = st.text_input("初期PW", "1234")
-            with c2:
-                n_po = st.selectbox("ポジション", ["GK", "DF", "MF", "FW"]); n_hi = st.number_input("身長", value=170.0); n_we = st.number_input("体重", value=60.0); n_up = st.file_uploader("写真")
+        with st.form("new_p"):
+            n_na, n_no, n_pw = st.text_input("名前"), st.number_input("番号", 1, 99), st.text_input("PW", "1234")
+            n_po, n_hi, n_we = st.selectbox("Pos", ["GK","DF","MF","FW"]), st.number_input("身長", 170.0), st.number_input("体重", 60.0)
+            n_up = st.file_uploader("写真を選択")
             if st.form_submit_button("登録"):
                 path = os.path.join(IMAGE_DIR, f"{n_no}_{n_na}.jpg") if n_up else ""
                 if n_up: Image.open(n_up).convert("RGB").resize((300, 300)).save(path)
-                new_row = {"背番号": n_no, "名前": n_na, "ポジション": n_po, "学年": "高3", "身長": n_hi, "体重": n_we, "画像パス": path, "パスワード": hash_password(n_pw)}
-                df_players = pd.concat([df_players, pd.DataFrame([new_row])], ignore_index=True); df_players.to_csv(MASTER_FILE, index=False, encoding="utf-8-sig"); st.session_state.show_form = None; st.rerun()
-    
+                new_entry = pd.DataFrame([{"背番号":n_no,"名前":n_na,"ポジション":n_po,"学年":"高3","身長":n_hi,"体重":n_we,"画像パス":path,"パスワード":hash_password(n_pw)}])
+                df_players = pd.concat([df_players, new_entry], ignore_index=True); df_players.to_csv(MASTER_FILE, index=False); st.session_state.show_form=None; st.rerun()
+
     st.markdown("---")
     t1, t2, t3, t4, t5 = st.tabs(["📋 選手名簿", "📈 個別推移管理", "📊 チーム状況", "🏆 フィジカルテストボード", "✅ 未入力者"])
     
     with t1:
-        cl = st.columns(4)
+        cls = st.columns(4)
         for i, (idx, row) in enumerate(df_players.iterrows()):
-            with cl[i%4]:
+            with cls[i%4]:
                 with st.container(border=True):
                     if pd.notnull(row['画像パス']) and os.path.exists(str(row['画像パス'])): st.image(str(row['画像パス']), use_container_width=True)
                     st.markdown(f"### #{row['背番号']} {row['名前']}")
-                    if st.button(f"詳細：{row['名前']}", key=f"v_{idx}", width="stretch"):
-                        st.session_state.selected_player_name = row['名前']; st.rerun()
+                    if st.button(f"詳細：{row['名前']}", key=f"v_{idx}", width="stretch"): st.session_state.selected_player_name = row['名前']; st.rerun()
     
     with t2:
         if st.session_state.selected_player_name:
-            p_name = st.session_state.selected_player_name
-            p_cond = df_cond[df_cond["名前"] == p_name].sort_values("日付")
-            st.write(f"### {p_name} 選手のデータ詳細")
-            if not p_cond.empty:
-                st.plotly_chart(px.line(p_cond, x="日付", y=["疲労度", "睡眠の質"], title="コンディション推移", markers=True, range_y=[0, 6], color_discrete_map=COLOR_MAP))
-            
-            p_phys = df_phys[df_phys["名前"] == p_name].sort_values("日付")
-            if not p_phys.empty:
-                st.write("#### フィジカルテスト推移")
-                t_sel_admin = st.selectbox("種目を選択", PHYS_TESTS, key="admin_p_sel")
-                t_data_admin = p_phys[p_phys["テスト種目"] == t_sel_admin]
-                if not t_data_admin.empty:
-                    st.plotly_chart(px.line(t_data_admin, x="日付", y="数値", title=f"{t_sel_admin} の推移", markers=True))
-            
-            with st.expander("🗑️ データの削除"):
-                d_type = st.radio("削除するデータ", ["体調", "フィジカル"], horizontal=True)
-                if d_type == "体調" and not p_cond.empty:
-                    del_date = st.selectbox("日付を選択", p_cond["日付"].unique(), key="del_c_admin")
-                    if st.button("体調データを削除"):
-                        df_cond = df_cond.drop(df_cond[(df_cond["名前"] == p_name) & (df_cond["日付"] == del_date)].index)
-                        df_cond.to_csv(CONDITION_FILE, index=False, encoding="utf-8-sig"); st.rerun()
-                elif d_type == "フィジカル" and not p_phys.empty:
-                    del_p_idx = st.selectbox("記録を選択", p_phys.index, format_func=lambda x: f"{p_phys.loc[x, '日付']} - {p_phys.loc[x, 'テスト種目']}: {p_phys.loc[x, '数値']}", key="del_p_admin")
-                    if st.button("フィジカルデータを削除"):
-                        df_phys = df_phys.drop(del_p_idx)
-                        df_phys.to_csv(PHYSICAL_FILE, index=False, encoding="utf-8-sig"); st.rerun()
-        else: st.info("選手を選択してください")
-
+            p_n = st.session_state.selected_player_name
+            p_c = df_cond[df_cond["名前"] == p_n].sort_values("日付")
+            st.write(f"### {p_n} 選手の分析データ")
+            if not p_c.empty: st.plotly_chart(px.line(p_c, x="日付", y=["疲労度", "睡眠の質"], title="体調推移", markers=True, range_y=[0,6], color_discrete_map=COLOR_MAP))
+            p_ph = df_phys[df_phys["名前"] == p_n].sort_values("日付")
+            if not p_ph.empty:
+                t_s = st.selectbox("種目", PHYS_TESTS)
+                st.plotly_chart(px.line(p_ph[p_ph["テスト種目"]==t_s], x="日付", y="数値", title=f"{t_s}推移", markers=True))
+            with st.expander("🗑️ 入力データの削除"):
+                cat = st.radio("削除するデータ種類", ["体調","テスト"], horizontal=True)
+                if cat=="体調" and not p_c.empty:
+                    d_d = st.selectbox("日付を選択", p_c["日付"].unique(), key="dc_admin")
+                    if st.button("体調データを削除"): df_cond = df_cond.drop(df_cond[(df_cond["名前"]==p_n)&(df_cond["日付"]==d_d)].index); df_cond.to_csv(CONDITION_FILE, index=False); st.rerun()
+                elif cat=="テスト" and not p_ph.empty:
+                    d_i = st.selectbox("記録を選択", p_ph.index, format_func=lambda x: f"{p_ph.loc[x,'日付']} {p_ph.loc[x,'テスト種目']}: {p_ph.loc[x,'数値']}", key="dp_admin")
+                    if st.button("フィジカル記録を削除"): df_phys = df_phys.drop(d_i); df_phys.to_csv(PHYSICAL_FILE, index=False); st.rerun()
+        else: st.info("選手名簿から選手を選択してください")
+    
     with t3:
-        today_data = df_cond[df_cond["日付"] == date.today()]
-        alert_p = today_data[(today_data["疲労度"] >= 4) | (today_data["怪我痛み"] == "はい")]
-        st.metric("要注意選手", f"{len(alert_p)} 名")
-        for _, r in alert_p.iterrows():
-            st.error(f"● {r['名前']} - 疲労:{r['疲労度']} / 痛み:{r['怪我痛み']} ({r['痛み詳細']})")
+        today_c = df_cond[df_cond["日付"]==date.today()]
+        alert = today_c[(today_c["疲労度"]>=4)|(today_c["怪我痛み"]=="はい")]
+        st.metric("要注意選手", f"{len(alert)}名")
+        for _, r in alert.iterrows(): st.error(f"● {r['名前']} - 疲労:{r['疲労度']} / 痛み:{r['怪我痛み']} ({r['痛み詳細']})")
         if not df_cond.empty:
             team_avg = df_cond.groupby("日付")[["疲労度", "睡眠の質"]].mean().reset_index()
             st.plotly_chart(px.line(team_avg, x="日付", y=["疲労度", "睡眠の質"], title="チーム平均推移", markers=True, range_y=[0, 6], color_discrete_map=COLOR_MAP))
-
+    
     with t4:
         st.subheader("🏆 フィジカルランキング & 成長分析")
-        l_cols = st.columns(len(PHYS_TESTS))
+        lcls = st.columns(4)
         for i, test in enumerate(PHYS_TESTS):
-            with l_cols[i]:
+            with lcls[i]:
                 st.markdown(f"#### {test}")
-                test_data = df_phys[df_phys["テスト種目"] == test]
-                if not test_data.empty:
-                    ascending = True if "秒" in test else False
-                    ranking = test_data.sort_values("数値", ascending=ascending).drop_duplicates("名前").head(5)
-                    for rank, (_, r) in enumerate(ranking.iterrows(), 1):
-                        p_hist = test_data[test_data["名前"] == r['名前']].sort_values("日付")
-                        growth = ""
-                        if len(p_hist) >= 2:
-                            diff = p_hist.iloc[-1]["数値"] - p_hist.iloc[-2]["数値"]
-                            is_growth = diff < 0 if ascending else diff > 0
-                            growth = f" <span style='color:{'green' if is_growth else 'red'}; font-size:0.8rem;'>({'+' if diff>0 else ''}{diff:.2f})</span>"
-                        st.markdown(f'<div class="leaderboard-card"><b>{rank}位: {r["名前"]}</b><br><span style="font-size: 1.2rem; color: #01579b;">{r["数値"]}</span>{growth}</div>', unsafe_allow_html=True)
-
+                td = df_phys[df_phys["テスト種目"]==test]
+                if not td.empty:
+                    asc = True if "秒" in test else False
+                    rank = td.sort_values("数値", ascending=asc).drop_duplicates("名前").head(5)
+                    for rk, (_, r) in enumerate(rank.iterrows(), 1):
+                        hist = td[td["名前"]==r['名前']].sort_values("日付")
+                        gt = ""
+                        if len(hist)>=2:
+                            diff = hist.iloc[-1]["数値"] - hist.iloc[-2]["数値"]
+                            clr = "green" if (diff<0 if asc else diff>0) else "red"
+                            gt = f" <span style='color:{clr}; font-size:0.8rem;'>({'+' if diff>0 else ''}{diff:.2f})</span>"
+                        st.markdown(f'<div class="leaderboard-card"><b>{rk}位: {r["名前"]}</b><br><span style="font-size:1.2rem; color:#01579b;">{r["数値"]}</span>{gt}</div>', unsafe_allow_html=True)
+                else: st.info("データなし")
+    
     with t5:
-        sub = df_cond[df_cond["日付"] == date.today()]["名前"].tolist()
-        not_sub = [p for p in df_players["名前"].tolist() if p not in sub]
-        if not not_sub: st.success("全員入力済み！")
+        sub = df_cond[df_cond["日付"]==date.today()]["名前"].tolist()
+        not_s = [p for p in df_players["名前"].tolist() if p not in sub]
+        if not not_s: st.success("全員入力が完了しています！")
         else:
-            cols = st.columns(4)
-            for i, name in enumerate(not_sub):
-                with cols[i%4]: st.warning(f"・ {name}")
+            cs = st.columns(4)
+            for i, n in enumerate(not_s):
+                with cs[i%4]: st.warning(f"・ {n}")
 
 else:
-    # --- 選手ビュー ---
+    # 選手ビュー
     my_info = df_players[df_players["名前"] == st.session_state.user_name].iloc[0]
     img_tag = "https://via.placeholder.com/150"
-    b64_img = get_base64_image(str(my_info['画像パス']))
-    if b64_img: img_tag = f"data:image/jpeg;base64,{b64_img}"
+    b64 = get_base64_image(str(my_info['画像パス']))
+    if b64: img_tag = f"data:image/jpeg;base64,{b64}"
 
-    # 【修正】プロフィール表示に身長を追加、ベスト体重を体重に変更
+    # プロフィール表示 (BMIはここから移動)
     st.markdown(f"""
     <div class="profile-container">
         <div class="profile-photo"><img src="{img_tag}" /></div>
         <div class="profile-details">
             <h2>{my_info['名前']} <span style='font-size: 1.2rem; color: #666;'>#{my_info['背番号']}</span></h2>
             <b>ポジション:</b> {my_info['ポジション']} | <b>学年:</b> {my_info['学年']}<br>
-            <b>身長:</b> {my_info['身長']}cm | <b>体重:</b> {my_info['体重']}kg
+            <b>身長:</b> {my_info['身長']}cm | <b>登録体重:</b> {my_info['体重']}kg
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -274,62 +250,79 @@ else:
     tp1, tp2, tp3 = st.tabs(["📝 今日の体調入力", "📈 自分の履歴", "🏆 ランキング"])
     
     with tp1:
+        latest_c = df_cond[df_cond["名前"] == st.session_state.user_name].sort_values("日付", ascending=False)
+        cur_w = latest_c.iloc[0]["体重"] if not latest_c.empty else my_info['体重']
         with st.container(border=True):
-            p_col1, p_col2 = st.columns(2)
-            with p_col1:
-                # 【修正】デフォルト値を最新の登録体重から取得
-                p_we = st.number_input("本日の体重 (kg)", value=float(my_info['体重']), step=0.1)
-                p_pn = st.radio("怪我・痛み", ["いいえ", "はい"], horizontal=True, key="p_pn_user")
-                p_dt = st.text_input("痛みの詳細") if p_pn == "はい" else ""
-            with p_col2:
-                p_fa = st.slider("疲労度 (1-5)", 1, 5, 3); p_sl = st.slider("睡眠 (1-5)", 1, 5, 3)
+            p_c1, p_c2 = st.columns(2)
+            with p_c1:
+                p_we = st.number_input("本日の体重 (kg)", value=float(cur_w), step=0.1)
+                p_pn = st.radio("怪我・痛み", ["いいえ", "はい"], horizontal=True, key="p_pn_u")
+                p_dt = st.text_input("詳細") if p_pn == "はい" else ""
+            with p_c2:
+                p_fa, p_sl = st.slider("疲労度", 1, 5, 3, key="s_fa"), st.slider("睡眠", 1, 5, 3, key="s_sl")
             if st.button("データを送信する", width="stretch", type="primary"):
-                new_c = {"日付": str(date.today()), "名前": st.session_state.user_name, "体重": p_we, "疲労度": p_fa, "睡眠の質": p_sl, "怪我痛み": p_pn, "痛み詳細": p_dt}
-                df_cond = pd.concat([df_cond, pd.DataFrame([new_c])], ignore_index=True); df_cond.to_csv(CONDITION_FILE, index=False, encoding="utf-8-sig"); st.success("送信完了！"); st.rerun()
-
+                n_c = pd.DataFrame([{"日付": date.today(), "名前": st.session_state.user_name, "体重": p_we, "疲労度": p_fa, "睡眠の質": p_sl, "怪我痛み": p_pn, "痛み詳細": p_dt}])
+                df_cond = pd.concat([df_cond, n_c], ignore_index=True); df_cond.to_csv(CONDITION_FILE, index=False, encoding="utf-8-sig"); st.success("送信完了"); st.rerun()
+    
     with tp2:
-        # 【修正】グラフを上下に分割配置
-        my_c = df_cond[df_cond["名前"] == st.session_state.user_name].sort_values("日付")
-        if not my_c.empty:
-            st.plotly_chart(px.line(my_c, x="日付", y=["疲労度", "睡眠の質"], title="体調推移グラフ", markers=True, range_y=[0, 6], color_discrete_map=COLOR_MAP), use_container_width=True)
+        # 【修正】BMIと目標体重を「自分の履歴」タブへ移動
+        mc = df_cond[df_cond["名前"]==st.session_state.user_name].sort_values("日付")
+        if not mc.empty:
+            # 最新の入力体重でBMIを計算
+            h_m = my_info['身長'] / 100
+            latest_weight = mc.iloc[-1]["体重"]
+            bmi = latest_weight / (h_m ** 2)
+            t_min, t_max = 21.0, 23.0 # U-18目標範囲
+            w_min, w_max = t_min * (h_m ** 2), t_max * (h_m ** 2)
+            
+            status, s_clr, t_msg = "", "", ""
+            if bmi < t_min: status, s_clr, t_msg = "エネルギー不足注意 (低め)", "orange", f"目標: **あと +{w_min - latest_weight:.1f} kg** でBMI 21.0"
+            elif bmi > t_max: status, s_clr, t_msg = "キレ・重さに注意 (高め)", "#FF4B4B", f"目標: **あと -{latest_weight - w_max:.1f} kg** でBMI 23.0"
+            else: status, s_clr, t_msg = "アスリート適正範囲", "#28a745", "目標: **現在の体重を維持しましょう**"
+
+            st.markdown(f"""
+            <div class="bmi-box">
+                <h4 style="margin-top:0; color:#01579b;">📊 最新のBMI判定 (本日: {latest_weight}kg)</h4>
+                <span style="font-size:1.8rem; font-weight:bold; color:{s_clr};">{bmi:.1f}</span>
+                <span style="margin-left:15px; font-size:1.2rem; font-weight:bold; color:{s_clr};">{status}</span><br>
+                <p style="margin:10px 0; font-size:1.1rem; color:#333; background:white; padding:10px; border-radius:5px;">{t_msg}</p>
+                <span style="font-size:0.85rem; color:#666;">※U-18推奨体重: {w_min:.1f}kg 〜 {w_max:.1f}kg (BMI:{t_min}-{t_max})</span>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # グラフは上下に配置
+            st.plotly_chart(px.line(mc, x="日付", y=["疲労度", "睡眠の質"], title="体調コンディション推移", markers=True, range_y=[0,6], color_discrete_map=COLOR_MAP), use_container_width=True)
         
-        my_p = df_phys[df_phys["名前"] == st.session_state.user_name].sort_values("日付")
-        if not my_p.empty:
+        mp = df_phys[df_phys["名前"]==st.session_state.user_name].sort_values("日付")
+        if not mp.empty:
             st.markdown("---")
-            t_sel_user = st.selectbox("フィジカル種目を選択", PHYS_TESTS, key="user_p_sel")
-            t_data_user = my_p[my_p["テスト種目"] == t_sel_user]
-            if not t_data_user.empty:
-                st.plotly_chart(px.line(t_data_user, x="日付", y="数値", title=f"{t_sel_user} の成長グラフ", markers=True), use_container_width=True)
-
+            us_t = st.selectbox("フィジカル種目を選択", PHYS_TESTS, key="us_t")
+            st.plotly_chart(px.line(mp[mp["テスト種目"]==us_t], x="日付", y="数値", title=f"{us_t}成長推移", markers=True), use_container_width=True)
+        
         with st.expander("⚙️ 履歴の削除"):
-            d_cat_user = st.radio("削除するデータ", ["体調", "フィジカル"], horizontal=True, key="d_cat_user")
-            if d_cat_user == "体調" and not my_c.empty:
-                d_day_user = st.selectbox("削除する日", my_c["日付"].unique(), key="del_c_user")
-                if st.button("体調データを削除"):
-                    df_cond = df_cond.drop(df_cond[(df_cond["名前"] == st.session_state.user_name) & (df_cond["日付"] == d_day_user)].index)
-                    df_cond.to_csv(CONDITION_FILE, index=False, encoding="utf-8-sig"); st.rerun()
-            elif d_cat_user == "フィジカル" and not my_p.empty:
-                d_idx_user = st.selectbox("削除する記録", my_p.index, format_func=lambda x: f"{my_p.loc[x, '日付']} - {my_p.loc[x, 'テスト種目']}: {my_p.loc[x, '数値']}", key="del_p_user")
-                if st.button("テスト記録を削除"):
-                    df_phys = df_phys.drop(d_idx_user)
-                    df_phys.to_csv(PHYSICAL_FILE, index=False, encoding="utf-8-sig"); st.rerun()
-
+            ut = st.radio("削除対象を選択", ["体調","テスト"], horizontal=True, key="ut_u")
+            if ut=="体調" and not mc.empty:
+                ud = st.selectbox("日付を選択", mc["日付"].unique(), key="ud_u")
+                if st.button("体調データを削除"): df_cond = df_cond.drop(df_cond[(df_cond["名前"]==st.session_state.user_name)&(df_cond["日付"]==ud)].index); df_cond.to_csv(CONDITION_FILE, index=False); st.rerun()
+            elif ut=="テスト" and not mp.empty:
+                ui = st.selectbox("テスト記録を選択", mp.index, format_func=lambda x: f"{mp.loc[x,'日付']} {mp.loc[x,'テスト種目']}: {mp.loc[x,'数値']}", key="ui_u")
+                if st.button("フィジカル記録を削除"): df_phys = df_phys.drop(ui); df_phys.to_csv(PHYSICAL_FILE, index=False); st.rerun()
+    
     with tp3:
-        st.subheader("🏆 チーム内ランキング")
-        l_cols = st.columns(len(PHYS_TESTS))
+        st.subheader("🏆 チームランキング")
+        lcls = st.columns(4)
         for i, test in enumerate(PHYS_TESTS):
-            with l_cols[i]:
+            with lcls[i]:
                 st.markdown(f"**{test}**")
-                t_d = df_phys[df_phys["テスト種目"] == test]
-                if not t_d.empty:
+                td = df_phys[df_phys["テスト種目"]==test]
+                if not td.empty:
                     asc = True if "秒" in test else False
-                    top = t_d.sort_values("数値", ascending=asc).iloc[0]
+                    top = td.sort_values("数値", ascending=asc).iloc[0]
                     st.metric("1位", top["名前"], f"{top['数値']}")
-                    my_h = t_d[t_d["名前"] == st.session_state.user_name].sort_values("日付")
+                    my_h = td[td["名前"]==st.session_state.user_name].sort_values("日付")
                     if not my_h.empty:
-                        curr = my_h.iloc[-1]["数値"]
-                        if len(my_h) >= 2:
-                            diff = curr - my_h.iloc[-2]["数値"]
-                            is_imp = diff < 0 if asc else diff > 0
-                            st.metric("自己最新", f"{curr}", delta=f"{diff:.2f}", delta_color="normal" if is_imp else "inverse")
-                        else: st.write(f"自己最新: {curr}")
+                        cur = my_h.iloc[-1]["数値"]
+                        if len(my_h)>=2:
+                            diff = cur - my_h.iloc[-2]["数値"]
+                            st.metric("あなた", f"{cur}", delta=f"{diff:.2f}", delta_color="normal" if (diff<0 if asc else diff>0) else "inverse")
+                        else: st.write(f"最新: {cur}")
