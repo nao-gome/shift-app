@@ -10,3 +10,8 @@ player_images/
 .streamlit/
 
 physical_tests.csv
+
+# シフト管理データ
+shift_data.csv
+shift_data_2026_02.csv
+shift_data_2026_03.csv
