@@ -1,0 +1,6 @@
+employee_id,name,base_salary,salary_type,transportation_daily,dependents,bank_code,bank_name_kana,branch_code,branch_name_kana,account_type,account_number,account_name_kana
+E001,山田 太郎,1200,Hourly,500,0,0001,ﾐｽﾞﾎ,001,ﾎﾝﾃﾝ,1,1234567,ﾔﾏﾀﾞ ﾀﾛｳ
+E002,鈴木 花子,1300,Hourly,600,1,0005,ﾐﾂﾋﾞｼUFJ,002,ｼﾌﾞﾔ,1,2345678,ｽｽﾞｷ ﾊﾅｺ
+E003,佐藤 次郎,350000,Monthly,1000,3,0009,ﾐﾂｲｽﾐﾄﾓ,003,ｼﾝｼﾞｭｸ,1,3456789,ｻﾄｳ ｼﾞﾛｳ
+E004,田中 美咲,280000,Monthly,800,0,0001,ﾐｽﾞﾎ,001,ﾎﾝﾃﾝ,1,4567890,ﾀﾅｶ ﾐｻｷ
+E005,高橋 健一,1150,Hourly,0,2,9900,ﾕｳﾁﾖ,008,ｲﾁﾆｰｻﾝ,1,5678901,ﾀｶﾊｼ ｹﾝｲﾁ
