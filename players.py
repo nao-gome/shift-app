@@ -1,15 +1,12 @@
 import streamlit as st
 import pandas as pd
 import os
-from PIL import Image
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 import plotly.express as px
-import base64
 import hashlib
 from supabase import create_client, Client
 
 # --- 1. ページ設定 ---
-# サイドバーを初期状態で隠す設定を追加
 st.set_page_config(page_title="Team Ops Hub", page_icon="⚽", layout="wide", initial_sidebar_state="collapsed")
 
 # --- 2. Supabase接続設定 ---
@@ -24,13 +21,6 @@ except Exception as e:
 # --- 3. 関数定義 ---
 def hash_password(password):
     return hashlib.sha256(str(password).encode()).hexdigest()
-
-def get_base64_image(image_path):
-    if image_path and os.path.exists(str(image_path)):
-        with open(image_path, "rb") as f:
-            data = f.read()
-        return base64.b64encode(data).decode()
-    return None
 
 def fetch_table_as_df(table_name):
     try:
@@ -48,11 +38,29 @@ def calculate_bmi(height_cm, weight_kg):
         return round(weight_kg / (height_m ** 2), 1)
     return 0
 
+# 画像アップロード関数 (Supabase Storage)
+def upload_image_to_supabase(file, file_name):
+    try:
+        bucket_name = "player_images"
+        # ファイルを読み込む
+        file_bytes = file.getvalue()
+        # Storageにアップロード (同名ファイルは上書き設定)
+        supabase.storage.from_(bucket_name).upload(
+            file_name, 
+            file_bytes, 
+            {"content-type": file.type, "upsert": "true"}
+        )
+        # 公開URLを取得
+        public_url = supabase.storage.from_(bucket_name).get_public_url(file_name)
+        return public_url
+    except Exception as e:
+        st.error(f"画像アップロードエラー: {e}")
+        return None
+
 # カスタムCSS
 st.markdown("""
     <style>
     header[data-testid="stHeader"] { display: none !important; }
-    /* サイドバーの開閉ボタンも念のため非表示にする（完全フルスクリーン化） */
     section[data-testid="stSidebar"] { display: none; }
     
     .full-width-header {
@@ -75,8 +83,6 @@ st.markdown("""
 # 定数
 COLOR_MAP = {"睡眠の質": "#1f77b4", "疲労度": "#d62728"}
 PHYS_TESTS = ["30mスプリント (秒)", "プロアジリティ (秒)", "垂直跳び (cm)", "Yo-Yoテスト (m)"]
-IMAGE_DIR = "player_images"
-if not os.path.exists(IMAGE_DIR): os.makedirs(IMAGE_DIR)
 
 # セッション状態
 if "authenticated" not in st.session_state: st.session_state.authenticated = False
@@ -114,8 +120,7 @@ if not st.session_state.authenticated:
 # --- 5. メイン画面 ---
 st.markdown(f'<div class="full-width-header"><h1>⚽ {st.session_state.user_name} モード</h1></div>', unsafe_allow_html=True)
 
-# ログアウトボタンを右上に配置（サイドバー廃止）
-# カラムでレイアウト調整：左側(空白) : 右側(ボタン) = 10 : 1
+# ログアウトボタン
 lo_col1, lo_col2 = st.columns([10, 1])
 with lo_col1:
     st.write(f"Login: **{st.session_state.user_name}**")
@@ -152,7 +157,8 @@ if st.session_state.user_role == "admin":
                     with st.form(key=f"edit_form_{row['id']}"):
                         c1, c2 = st.columns([1, 3])
                         with c1:
-                            if row.get('image_url') and os.path.exists(row['image_url']):
+                            # 画像URLがある場合は表示
+                            if row.get('image_url'):
                                 st.image(row['image_url'], width=100)
                             else:
                                 st.write("No Image")
@@ -184,7 +190,7 @@ if st.session_state.user_role == "admin":
         else:
             st.info("選手が登録されていません。")
 
-    # 2. 新規登録
+    # 2. 新規登録 (画像アップロード機能追加)
     with tabs[1]:
         st.subheader("👤 新規選手登録")
         with st.form("reg_player", clear_on_submit=True):
@@ -194,15 +200,24 @@ if st.session_state.user_role == "admin":
             n_h = st.number_input("身長 (cm)", value=170.0)
             n_w = st.number_input("体重 (kg)", value=60.0)
             n_pw = st.text_input("選手用パスワード", "1234")
-            n_img = st.file_uploader("画像")
+            n_img = st.file_uploader("画像 (jpg/png)")
             
             if st.form_submit_button("登録", use_container_width=True):
                 if n_name:
-                    path = os.path.join(IMAGE_DIR, f"{n_num}_{n_name}.jpg") if n_img else ""
+                    # 画像アップロード処理
+                    image_url = ""
                     if n_img:
-                        with open(path, "wb") as f: f.write(n_img.getbuffer())
-                    
-                    data = {"name": n_name, "number": n_num, "position": n_pos, "height": n_h, "weight": n_w, "password_hash": hash_password(n_pw), "image_url": path}
+                        file_name = f"{n_num}_{n_name}_{datetime.now().strftime('%Y%m%d%H%M%S')}.jpg"
+                        uploaded_url = upload_image_to_supabase(n_img, file_name)
+                        if uploaded_url:
+                            image_url = uploaded_url
+
+                    data = {
+                        "name": n_name, "number": n_num, "position": n_pos, 
+                        "height": n_h, "weight": n_w, 
+                        "password_hash": hash_password(n_pw), 
+                        "image_url": image_url  # URLを保存
+                    }
                     try:
                         supabase.table("players").insert(data).execute()
                         st.success(f"{n_name} を登録しました！")
@@ -214,7 +229,6 @@ if st.session_state.user_role == "admin":
 
     # 3. 分析
     with tabs[2]:
-        # A. アラート
         st.subheader("⚠️ 要注意選手アラート (前日比)")
         if not df_cond.empty:
             alert_players = []
@@ -241,7 +255,6 @@ if st.session_state.user_role == "admin":
 
         st.divider()
 
-        # B. チーム平均
         st.subheader("📊 チーム全体の平均コンディション")
         if not df_cond.empty:
             df_avg = df_cond.groupby("date")[["fatigue", "sleep"]].mean().reset_index()
@@ -250,7 +263,6 @@ if st.session_state.user_role == "admin":
 
         st.divider()
 
-        # C. 個人分析
         st.subheader("👤 個人詳細分析")
         if not df_players.empty:
             target = st.selectbox("分析する選手を選択", df_players["name"].tolist())
@@ -323,8 +335,8 @@ if st.session_state.user_role == "admin":
 # ========== 選手モード ==========
 else:
     my_info = df_players[df_players["name"] == st.session_state.user_name].iloc[0]
-    img_base64 = get_base64_image(my_info.get("image_url", ""))
-    img_src = f"data:image/jpeg;base64,{img_base64}" if img_base64 else "https://via.placeholder.com/150"
+    # 画像表示: URLを直接使用
+    img_src = my_info.get("image_url") if my_info.get("image_url") else "https://via.placeholder.com/150"
     my_bmi = calculate_bmi(my_info['height'], my_info['weight'])
     
     st.markdown(f"""
