@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import os
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 import plotly.express as px
 import hashlib
 from supabase import create_client, Client
@@ -38,19 +38,16 @@ def calculate_bmi(height_cm, weight_kg):
         return round(weight_kg / (height_m ** 2), 1)
     return 0
 
-# 画像アップロード関数 (Supabase Storage)
+# 画像アップロード関数
 def upload_image_to_supabase(file, file_name):
     try:
         bucket_name = "player_images"
-        # ファイルを読み込む
         file_bytes = file.getvalue()
-        # Storageにアップロード (同名ファイルは上書き設定)
         supabase.storage.from_(bucket_name).upload(
             file_name, 
             file_bytes, 
             {"content-type": file.type, "upsert": "true"}
         )
-        # 公開URLを取得
         public_url = supabase.storage.from_(bucket_name).get_public_url(file_name)
         return public_url
     except Exception as e:
@@ -77,6 +74,9 @@ st.markdown("""
         display: flex; justify-content: center; align-items: center;
     }
     .profile-photo img { width: 100%; height: 100%; object-fit: cover; }
+    
+    /* 削除ボタンのスタイル強調 */
+    div[data-testid="stExpander"] details summary p { font-weight: bold; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -154,10 +154,10 @@ if st.session_state.user_role == "admin":
             for i, row in df_players.iterrows():
                 bmi = calculate_bmi(row['height'], row['weight'])
                 with st.expander(f"No.{row['number']} : {row['name']} (Pos: {row['position']})"):
+                    # 編集フォーム
                     with st.form(key=f"edit_form_{row['id']}"):
                         c1, c2 = st.columns([1, 3])
                         with c1:
-                            # 画像URLがある場合は表示
                             if row.get('image_url'):
                                 st.image(row['image_url'], width=100)
                             else:
@@ -165,8 +165,9 @@ if st.session_state.user_role == "admin":
                         with c2:
                             e_num = st.number_input("背番号", value=int(row['number']), step=1)
                             e_pos = st.selectbox("ポジション", ["GK", "DF", "MF", "FW"], index=["GK", "DF", "MF", "FW"].index(row['position']))
-                            e_height = st.number_input("身長 (cm)", value=float(row['height']))
-                            e_weight = st.number_input("体重 (kg)", value=float(row['weight']))
+                            # バリデーション: 身長100-250, 体重30-150
+                            e_height = st.number_input("身長 (cm)", value=float(row['height']), min_value=100.0, max_value=250.0, step=0.1)
+                            e_weight = st.number_input("体重 (kg)", value=float(row['weight']), min_value=30.0, max_value=150.0, step=0.1)
                             st.caption(f"現在のBMI: {bmi}")
 
                         if st.form_submit_button("情報を更新"):
@@ -180,31 +181,36 @@ if st.session_state.user_role == "admin":
                             except Exception as e:
                                 st.error(f"更新エラー: {e}")
                     
-                    if st.button("この選手を削除", key=f"del_{row['id']}"):
-                        try:
-                            supabase.table("players").delete().eq("id", row['id']).execute()
-                            st.success(f"{row['name']} を削除しました")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"削除エラー: {e}")
+                    st.divider()
+                    
+                    # 削除確認エリア（安全装置）
+                    with st.expander("🗑️ 削除メニュー（危険）"):
+                        st.warning(f"本当に {row['name']} 選手を削除しますか？\nこの操作は取り消せません。")
+                        if st.button("本当に削除する", key=f"del_{row['id']}", type="primary"):
+                            try:
+                                supabase.table("players").delete().eq("id", row['id']).execute()
+                                st.success(f"{row['name']} を削除しました")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"削除エラー: {e}")
         else:
             st.info("選手が登録されていません。")
 
-    # 2. 新規登録 (画像アップロード機能追加)
+    # 2. 新規登録
     with tabs[1]:
         st.subheader("👤 新規選手登録")
         with st.form("reg_player", clear_on_submit=True):
             n_name = st.text_input("名前")
             n_num = st.number_input("背番号", step=1, value=10)
             n_pos = st.selectbox("ポジション", ["GK", "DF", "MF", "FW"])
-            n_h = st.number_input("身長 (cm)", value=170.0)
-            n_w = st.number_input("体重 (kg)", value=60.0)
+            # バリデーション適用
+            n_h = st.number_input("身長 (cm)", value=170.0, min_value=100.0, max_value=250.0, step=0.1)
+            n_w = st.number_input("体重 (kg)", value=60.0, min_value=30.0, max_value=150.0, step=0.1)
             n_pw = st.text_input("選手用パスワード", "1234")
             n_img = st.file_uploader("画像 (jpg/png)")
             
             if st.form_submit_button("登録", use_container_width=True):
                 if n_name:
-                    # 画像アップロード処理
                     image_url = ""
                     if n_img:
                         file_name = f"{n_num}_{n_name}_{datetime.now().strftime('%Y%m%d%H%M%S')}.jpg"
@@ -216,7 +222,7 @@ if st.session_state.user_role == "admin":
                         "name": n_name, "number": n_num, "position": n_pos, 
                         "height": n_h, "weight": n_w, 
                         "password_hash": hash_password(n_pw), 
-                        "image_url": image_url  # URLを保存
+                        "image_url": image_url
                     }
                     try:
                         supabase.table("players").insert(data).execute()
@@ -287,7 +293,8 @@ if st.session_state.user_role == "admin":
                 p_target = st.selectbox("対象選手", df_players["name"].tolist())
                 c1, c2 = st.columns(2)
                 with c1:
-                    p_w = st.number_input("体重 (kg)", step=0.1)
+                    # バリデーション適用
+                    p_w = st.number_input("体重 (kg)", step=0.1, min_value=30.0, max_value=150.0)
                     p_inj = st.radio("怪我", ["なし", "あり"], horizontal=True)
                     p_inj_dt = st.text_input("痛みの詳細")
                 with c2:
@@ -323,7 +330,8 @@ if st.session_state.user_role == "admin":
             if not df_players.empty:
                 t_player = st.selectbox("選手", df_players["name"].tolist())
                 t_name = st.selectbox("種目", PHYS_TESTS)
-                t_val = st.number_input("数値", step=0.01)
+                # バリデーション: 負の数値を許可しない
+                t_val = st.number_input("数値", step=0.01, min_value=0.0)
                 t_date = st.date_input("測定日", date.today())
                 if st.form_submit_button("保存", use_container_width=True):
                     data = {"player_name": t_player, "test_name": t_name, "value": t_val, "date": str(t_date)}
@@ -335,7 +343,6 @@ if st.session_state.user_role == "admin":
 # ========== 選手モード ==========
 else:
     my_info = df_players[df_players["name"] == st.session_state.user_name].iloc[0]
-    # 画像表示: URLを直接使用
     img_src = my_info.get("image_url") if my_info.get("image_url") else "https://via.placeholder.com/150"
     my_bmi = calculate_bmi(my_info['height'], my_info['weight'])
     
@@ -356,7 +363,8 @@ else:
         st.subheader("今日の体調を入力")
         c1, c2 = st.columns(2)
         with c1:
-            in_w = st.number_input("今日の体重 (kg)", value=float(my_info['weight']), step=0.1)
+            # バリデーション適用
+            in_w = st.number_input("今日の体重 (kg)", value=float(my_info['weight']), step=0.1, min_value=30.0, max_value=150.0)
             in_inj = st.radio("怪我・痛み", ["なし", "あり"], horizontal=True, key="injury_radio")
             in_inj_dt = st.text_input("痛みの詳細") if in_inj == "あり" else ""
         with c2:
@@ -378,7 +386,6 @@ else:
             st.markdown("#### 体重推移")
             st.plotly_chart(px.line(my_cond_plot, x="date", y="体重", markers=True), use_container_width=True)
             
-            # --- 目標体重比較 ---
             last_w = my_cond.iloc[-1]["weight"]
             height_m = my_info['height'] / 100
             target_w = round(height_m ** 2 * 22, 1)
