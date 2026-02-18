@@ -2,17 +2,17 @@ import streamlit as st
 import pandas as pd
 import os
 from PIL import Image
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 import plotly.express as px
 import base64
 import hashlib
 from supabase import create_client, Client
 
-# --- 1. ページ設定 (必ず一番最初に書く) ---
-st.set_page_config(page_title="Team Ops Hub", page_icon="⚽", layout="wide")
+# --- 1. ページ設定 ---
+# サイドバーを初期状態で隠す設定を追加
+st.set_page_config(page_title="Team Ops Hub", page_icon="⚽", layout="wide", initial_sidebar_state="collapsed")
 
 # --- 2. Supabase接続設定 ---
-# secrets.toml から設定を読み込む
 try:
     SUPABASE_URL = st.secrets["supabase"]["url"]
     SUPABASE_KEY = st.secrets["supabase"]["key"]
@@ -23,7 +23,6 @@ except Exception as e:
 
 # --- 3. 関数定義 ---
 def hash_password(password):
-    """パスワードをハッシュ化"""
     return hashlib.sha256(str(password).encode()).hexdigest()
 
 def get_base64_image(image_path):
@@ -34,32 +33,35 @@ def get_base64_image(image_path):
     return None
 
 def fetch_table_as_df(table_name):
-    """Supabaseから全データを取得してDataFrameにする"""
     try:
-        # ID順に並べて取得
         response = supabase.table(table_name).select("*").order("id").execute()
         df = pd.DataFrame(response.data)
-        # 日付カラムがあればdatetime型に変換
         if not df.empty and "date" in df.columns:
             df["date"] = pd.to_datetime(df["date"]).dt.date
         return df
     except Exception as e:
         return pd.DataFrame()
 
+def calculate_bmi(height_cm, weight_kg):
+    if height_cm > 0:
+        height_m = height_cm / 100
+        return round(weight_kg / (height_m ** 2), 1)
+    return 0
+
 # カスタムCSS
 st.markdown("""
     <style>
     header[data-testid="stHeader"] { display: none !important; }
+    /* サイドバーの開閉ボタンも念のため非表示にする（完全フルスクリーン化） */
+    section[data-testid="stSidebar"] { display: none; }
+    
     .full-width-header {
-        background-color: #01579b; color: white; padding: 20px; margin-bottom: 20px;
+        background-color: #01579b; color: white; padding: 20px; margin-bottom: 10px;
         display: flex; justify-content: center; align-items: center; border-radius: 0 0 15px 15px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
     }
-    .full-width-header h1 { margin: 0; font-size: 2rem; font-weight: 800; }
     .profile-container {
         display: flex; background-color: #f8f9fa; padding: 20px; border-radius: 15px;
         border-left: 10px solid #01579b; margin-bottom: 20px; align-items: center; gap: 20px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
     }
     .profile-photo {
         width: 120px; height: 120px; border-radius: 50%; overflow: hidden;
@@ -71,12 +73,12 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 # 定数
-COLOR_MAP = {"sleep": "#1f77b4", "fatigue": "#d62728"}
+COLOR_MAP = {"睡眠の質": "#1f77b4", "疲労度": "#d62728"}
 PHYS_TESTS = ["30mスプリント (秒)", "プロアジリティ (秒)", "垂直跳び (cm)", "Yo-Yoテスト (m)"]
 IMAGE_DIR = "player_images"
 if not os.path.exists(IMAGE_DIR): os.makedirs(IMAGE_DIR)
 
-# セッション状態の初期化
+# セッション状態
 if "authenticated" not in st.session_state: st.session_state.authenticated = False
 if "user_role" not in st.session_state: st.session_state.user_role = None
 if "user_name" not in st.session_state: st.session_state.user_name = None
@@ -85,22 +87,18 @@ if "user_name" not in st.session_state: st.session_state.user_name = None
 if not st.session_state.authenticated:
     st.markdown('<div class="full-width-header"><h1>⚽ LOGIN</h1></div>', unsafe_allow_html=True)
     with st.container(border=True):
-        st.info("初回は管理者(admin)でログインして選手を登録してください")
         u_id = st.text_input("名前 (Name)")
         u_pw = st.text_input("パスワード", type="password")
         
         if st.button("ログイン", use_container_width=True):
-            # A. 管理者ログイン (secrets.tomlのパスワードを使用)
             if u_id == "admin" and u_pw == st.secrets.get("admin_password", "admin123"):
                 st.session_state.authenticated = True
                 st.session_state.user_role = "admin"
                 st.session_state.user_name = "管理者"
                 st.rerun()
             
-            # B. 選手ログイン (SupabaseのDBと照合)
             h_pw = hash_password(u_pw)
             try:
-                # 名前とハッシュ化パスワードが一致する選手を探す
                 res = supabase.table("players").select("*").eq("name", u_id).eq("password_hash", h_pw).execute()
                 if res.data:
                     st.session_state.authenticated = True
@@ -113,84 +111,187 @@ if not st.session_state.authenticated:
                 st.error(f"ログインエラー: {e}")
     st.stop()
 
-# --- 5. メイン画面 (ログイン後) ---
+# --- 5. メイン画面 ---
 st.markdown(f'<div class="full-width-header"><h1>⚽ {st.session_state.user_name} モード</h1></div>', unsafe_allow_html=True)
 
-# サイドバー（ログアウト機能）
-with st.sidebar:
+# ログアウトボタンを右上に配置（サイドバー廃止）
+# カラムでレイアウト調整：左側(空白) : 右側(ボタン) = 10 : 1
+lo_col1, lo_col2 = st.columns([10, 1])
+with lo_col1:
     st.write(f"Login: **{st.session_state.user_name}**")
-    if st.button("ログアウト"):
+with lo_col2:
+    if st.button("ログアウト", key="logout_btn", use_container_width=True):
         st.session_state.authenticated = False
         st.rerun()
 
-# データを最新状態で取得（毎回DBからロード）
+st.divider()
+
+# データ取得
 df_players = fetch_table_as_df("players")
 df_cond = fetch_table_as_df("conditions")
 df_phys = fetch_table_as_df("physical_tests")
 
 # ========== 管理者モード ==========
 if st.session_state.user_role == "admin":
-    # タブ設定
-    t1, t2, t3, t4 = st.tabs(["📋 選手名簿", "📈 分析", "🏆 ランキング", "🛠️ 登録・入力"])
+    tabs = st.tabs([
+        "📋 名簿・編集", 
+        "👤 新規登録", 
+        "📈 分析", 
+        "💊 コンディション代行",
+        "🏆 ランキング", 
+        "⏱️ フィジカルテスト入力"
+    ])
 
-    # 1. 選手名簿 & 削除
-    with t1:
-        st.subheader("登録選手一覧")
+    # 1. 名簿・編集
+    with tabs[0]:
+        st.subheader("選手情報の編集・更新")
         if not df_players.empty:
             for i, row in df_players.iterrows():
-                # カード形式で表示
-                with st.expander(f"#{row['number']} {row['name']} ({row['position']})"):
-                    c1, c2 = st.columns([1, 3])
-                    with c1:
-                        # 画像表示（ローカルにあれば）
-                        if row.get('image_url') and os.path.exists(row['image_url']):
-                            st.image(row['image_url'])
-                        else:
-                            st.write("No Image")
-                    with c2:
-                        st.write(f"身長: {row['height']}cm / 体重: {row['weight']}kg")
-                        st.caption(f"登録日: {str(row['created_at'])[:10]}")
-                        
-                        # 削除ボタン
-                        if st.button("この選手を削除", key=f"del_{row['id']}"):
-                            # DBから削除 (Cascade設定済みなので関連データも消える)
+                bmi = calculate_bmi(row['height'], row['weight'])
+                with st.expander(f"No.{row['number']} : {row['name']} (Pos: {row['position']})"):
+                    with st.form(key=f"edit_form_{row['id']}"):
+                        c1, c2 = st.columns([1, 3])
+                        with c1:
+                            if row.get('image_url') and os.path.exists(row['image_url']):
+                                st.image(row['image_url'], width=100)
+                            else:
+                                st.write("No Image")
+                        with c2:
+                            e_num = st.number_input("背番号", value=int(row['number']), step=1)
+                            e_pos = st.selectbox("ポジション", ["GK", "DF", "MF", "FW"], index=["GK", "DF", "MF", "FW"].index(row['position']))
+                            e_height = st.number_input("身長 (cm)", value=float(row['height']))
+                            e_weight = st.number_input("体重 (kg)", value=float(row['weight']))
+                            st.caption(f"現在のBMI: {bmi}")
+
+                        if st.form_submit_button("情報を更新"):
                             try:
-                                supabase.table("players").delete().eq("name", row['name']).execute()
-                                st.success(f"{row['name']} を削除しました")
+                                supabase.table("players").update({
+                                    "number": e_num, "position": e_pos,
+                                    "height": e_height, "weight": e_weight
+                                }).eq("id", row['id']).execute()
+                                st.success(f"{row['name']} の情報を更新しました！")
                                 st.rerun()
                             except Exception as e:
-                                st.error(f"削除エラー: {e}")
+                                st.error(f"更新エラー: {e}")
+                    
+                    if st.button("この選手を削除", key=f"del_{row['id']}"):
+                        try:
+                            supabase.table("players").delete().eq("id", row['id']).execute()
+                            st.success(f"{row['name']} を削除しました")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"削除エラー: {e}")
         else:
-            st.info("選手がまだ登録されていません。「登録・入力」タブから追加してください。")
+            st.info("選手が登録されていません。")
 
-    # 2. データ分析
-    with t2:
+    # 2. 新規登録
+    with tabs[1]:
+        st.subheader("👤 新規選手登録")
+        with st.form("reg_player", clear_on_submit=True):
+            n_name = st.text_input("名前")
+            n_num = st.number_input("背番号", step=1, value=10)
+            n_pos = st.selectbox("ポジション", ["GK", "DF", "MF", "FW"])
+            n_h = st.number_input("身長 (cm)", value=170.0)
+            n_w = st.number_input("体重 (kg)", value=60.0)
+            n_pw = st.text_input("選手用パスワード", "1234")
+            n_img = st.file_uploader("画像")
+            
+            if st.form_submit_button("登録", use_container_width=True):
+                if n_name:
+                    path = os.path.join(IMAGE_DIR, f"{n_num}_{n_name}.jpg") if n_img else ""
+                    if n_img:
+                        with open(path, "wb") as f: f.write(n_img.getbuffer())
+                    
+                    data = {"name": n_name, "number": n_num, "position": n_pos, "height": n_h, "weight": n_w, "password_hash": hash_password(n_pw), "image_url": path}
+                    try:
+                        supabase.table("players").insert(data).execute()
+                        st.success(f"{n_name} を登録しました！")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"エラー: {e}")
+                else:
+                    st.error("名前必須")
+
+    # 3. 分析
+    with tabs[2]:
+        # A. アラート
+        st.subheader("⚠️ 要注意選手アラート (前日比)")
+        if not df_cond.empty:
+            alert_players = []
+            for player in df_cond["player_name"].unique():
+                p_data = df_cond[df_cond["player_name"] == player].sort_values("date")
+                if len(p_data) >= 2:
+                    curr = p_data.iloc[-1]
+                    prev = p_data.iloc[-2]
+                    reasons = []
+                    if (curr["fatigue"] - prev["fatigue"] >= 3) and (curr["fatigue"] >= 4):
+                        reasons.append(f"疲労急増 (+{curr['fatigue']-prev['fatigue']})")
+                    if (prev["sleep"] - curr["sleep"] >= 3) and (curr["sleep"] <= 2):
+                        reasons.append(f"睡眠悪化 (-{prev['sleep']-curr['sleep']})")
+                    if (prev["weight"] - curr["weight"] >= 1.5):
+                        reasons.append(f"体重急減 (-{prev['weight']-curr['weight']:.1f}kg)")
+                    
+                    if reasons:
+                        alert_players.append(f"**{player}**: {', '.join(reasons)}")
+            
+            if alert_players:
+                for alert in alert_players: st.error(alert)
+            else:
+                st.success("アラートなし")
+
+        st.divider()
+
+        # B. チーム平均
+        st.subheader("📊 チーム全体の平均コンディション")
+        if not df_cond.empty:
+            df_avg = df_cond.groupby("date")[["fatigue", "sleep"]].mean().reset_index()
+            df_avg = df_avg.rename(columns={"fatigue": "疲労度", "sleep": "睡眠の質"})
+            st.plotly_chart(px.line(df_avg, x="date", y=["疲労度", "睡眠の質"], range_y=[0, 6], markers=True, color_discrete_map=COLOR_MAP), use_container_width=True)
+
+        st.divider()
+
+        # C. 個人分析
+        st.subheader("👤 個人詳細分析")
         if not df_players.empty:
             target = st.selectbox("分析する選手を選択", df_players["name"].tolist())
-            
-            # 体調グラフ
             p_cond = df_cond[df_cond["player_name"] == target].sort_values("date") if not df_cond.empty else pd.DataFrame()
             if not p_cond.empty:
-                st.markdown("##### コンディション推移")
-                st.plotly_chart(px.line(p_cond, x="date", y=["fatigue", "sleep"], markers=True, range_y=[0,6], color_discrete_map=COLOR_MAP))
-            else:
-                st.info("体調データがありません")
-
-            # テストグラフ
+                p_cond_plot = p_cond.rename(columns={"fatigue": "疲労度", "sleep": "睡眠の質", "weight": "体重"})
+                st.plotly_chart(px.line(p_cond_plot, x="date", y=["疲労度", "睡眠の質"], markers=True, range_y=[0,6], color_discrete_map=COLOR_MAP), use_container_width=True)
+                st.plotly_chart(px.line(p_cond_plot, x="date", y="体重", markers=True, title="体重推移"), use_container_width=True)
+            
             p_phys = df_phys[df_phys["player_name"] == target].sort_values("date") if not df_phys.empty else pd.DataFrame()
             if not p_phys.empty:
-                st.markdown("##### フィジカルテスト推移")
                 t_kind = st.selectbox("種目を選択", PHYS_TESTS)
                 p_test = p_phys[p_phys["test_name"] == t_kind]
                 if not p_test.empty:
-                    st.plotly_chart(px.line(p_test, x="date", y="value", markers=True, title=t_kind))
-                else:
-                    st.info("この種目のデータはまだありません")
-        else:
-            st.warning("選手データがありません")
+                    st.plotly_chart(px.line(p_test, x="date", y="value", markers=True, title=t_kind), use_container_width=True)
 
-    # 3. ランキング
-    with t3:
+    # 4. コンディション代行
+    with tabs[3]:
+        st.subheader("💊 コンディション記録代行")
+        with st.form("proxy_input", clear_on_submit=True):
+            if not df_players.empty:
+                p_target = st.selectbox("対象選手", df_players["name"].tolist())
+                c1, c2 = st.columns(2)
+                with c1:
+                    p_w = st.number_input("体重 (kg)", step=0.1)
+                    p_inj = st.radio("怪我", ["なし", "あり"], horizontal=True)
+                    p_inj_dt = st.text_input("痛みの詳細")
+                with c2:
+                    p_fat = st.slider("疲労度", 1, 5, 3)
+                    p_slp = st.slider("睡眠", 1, 5, 3)
+                p_date = st.date_input("対象日", date.today())
+
+                if st.form_submit_button("代行入力", use_container_width=True):
+                    data = {"player_name": p_target, "date": str(p_date), "weight": p_w, "fatigue": p_fat, "sleep": p_slp, "injury": p_inj, "injury_detail": p_inj_dt if p_inj == "あり" else ""}
+                    supabase.table("conditions").insert(data).execute()
+                    st.success("保存完了")
+            else:
+                st.info("選手がいません")
+
+    # 5. ランキング
+    with tabs[4]:
         st.subheader("種目別トップ5")
         if not df_phys.empty:
             cols = st.columns(2)
@@ -200,160 +301,80 @@ if st.session_state.user_role == "admin":
                     asc = True if "秒" in test else False
                     sub = df_phys[df_phys["test_name"] == test]
                     if not sub.empty:
-                        # 最高記録を取得
                         rank = sub.sort_values("value", ascending=asc).drop_duplicates("player_name").head(5)
                         st.dataframe(rank[["player_name", "value", "date"]].reset_index(drop=True), hide_index=True)
-                    else:
-                        st.caption("データなし")
-        else:
-            st.info("テストデータがありません")
 
-    # 4. 登録・入力
-    with t4:
-        c1, c2 = st.columns(2)
-        
-        # A. 新規選手登録フォーム
-        with c1:
-            st.subheader("👤 新規選手登録")
-            with st.form("reg_player", clear_on_submit=True):
-                n_name = st.text_input("名前 (フルネーム)")
-                col_a, col_b = st.columns(2)
-                with col_a:
-                    n_num = st.number_input("背番号", step=1, value=10)
-                    n_pos = st.selectbox("ポジション", ["GK", "DF", "MF", "FW"])
-                with col_b:
-                    n_h = st.number_input("身長 (cm)", value=170.0)
-                    n_w = st.number_input("体重 (kg)", value=60.0)
-                
-                n_pw = st.text_input("選手用パスワード", "1234")
-                n_img = st.file_uploader("プロフィール画像")
-                
-                # ★修正箇所: ボタンを必ずフォーム内に配置
-                submitted = st.form_submit_button("選手を登録")
-                
-                if submitted:
-                    if n_name:
-                        # 画像保存処理
-                        path = ""
-                        if n_img:
-                            path = os.path.join(IMAGE_DIR, f"{n_num}_{n_name}.jpg")
-                            with open(path, "wb") as f:
-                                f.write(n_img.getbuffer())
-                        
-                        # DBへインサート
-                        data = {
-                            "name": n_name, "number": n_num, "position": n_pos,
-                            "height": n_h, "weight": n_w,
-                            "password_hash": hash_password(n_pw), "image_url": path
-                        }
-                        try:
-                            supabase.table("players").insert(data).execute()
-                            st.success(f"{n_name} をデータベースに登録しました！")
-                            # rerunはフォーム送信後に行うと良い
-                        except Exception as e:
-                            st.error(f"登録エラー: {e}")
-                    else:
-                        st.error("名前を入力してください")
-
-        # B. テスト記録入力フォーム
-        with c2:
-            st.subheader("🏆 テスト記録入力")
-            with st.form("reg_test", clear_on_submit=True):
-                # 選手がいる場合のみ選択肢を表示
-                if not df_players.empty:
-                    t_player = st.selectbox("選手", df_players["name"].tolist())
-                    t_name = st.selectbox("種目", PHYS_TESTS)
-                    t_val = st.number_input("数値 (秒/cm/m)", step=0.01)
-                    t_date = st.date_input("測定日", date.today())
-                    
-                    # ★修正箇所: ボタンをフォーム内に配置
-                    submitted_test = st.form_submit_button("記録を保存")
-                    
-                    if submitted_test:
-                        data = {
-                            "player_name": t_player, "test_name": t_name,
-                            "value": t_val, "date": str(t_date)
-                        }
-                        try:
-                            supabase.table("physical_tests").insert(data).execute()
-                            st.success(f"{t_player} の記録を保存しました")
-                        except Exception as e:
-                            st.error(f"保存エラー: {e}")
-                else:
-                    st.info("先に選手を登録してください")
-                    # エラー回避のためダミーボタンを配置
-                    st.form_submit_button("登録不可", disabled=True)
+    # 6. フィジカルテスト入力
+    with tabs[5]:
+        st.subheader("🏆 フィジカルテスト記録入力")
+        with st.form("reg_test", clear_on_submit=True):
+            if not df_players.empty:
+                t_player = st.selectbox("選手", df_players["name"].tolist())
+                t_name = st.selectbox("種目", PHYS_TESTS)
+                t_val = st.number_input("数値", step=0.01)
+                t_date = st.date_input("測定日", date.today())
+                if st.form_submit_button("保存", use_container_width=True):
+                    data = {"player_name": t_player, "test_name": t_name, "value": t_val, "date": str(t_date)}
+                    supabase.table("physical_tests").insert(data).execute()
+                    st.success("保存完了")
+            else:
+                st.info("選手が登録されていません")
 
 # ========== 選手モード ==========
 else:
-    # 自分の情報を取得
-    if df_players.empty:
-        st.error("データが見つかりません。管理者に問い合わせてください。")
-        st.stop()
-
-    my_info_df = df_players[df_players["name"] == st.session_state.user_name]
-    if my_info_df.empty:
-        st.error("ユーザー情報が見つかりません")
-        st.stop()
-        
-    my_info = my_info_df.iloc[0]
-    
-    # プロフィール表示
-    img_path = my_info.get("image_url", "")
-    img_base64 = get_base64_image(img_path)
+    my_info = df_players[df_players["name"] == st.session_state.user_name].iloc[0]
+    img_base64 = get_base64_image(my_info.get("image_url", ""))
     img_src = f"data:image/jpeg;base64,{img_base64}" if img_base64 else "https://via.placeholder.com/150"
+    my_bmi = calculate_bmi(my_info['height'], my_info['weight'])
     
     st.markdown(f"""
     <div class="profile-container">
         <div class="profile-photo"><img src="{img_src}"></div>
         <div>
             <h2>{my_info['name']} <small>#{my_info['number']}</small></h2>
-            <p>身長: {my_info['height']}cm | 体重: {my_info['weight']}kg | Pos: {my_info['position']}</p>
+            <p>身長: {my_info['height']}cm | 体重: {my_info['weight']}kg | <b>BMI: {my_bmi}</b></p>
+            <p>Pos: {my_info['position']}</p>
         </div>
     </div>
     """, unsafe_allow_html=True)
 
-    tab1, tab2 = st.tabs(["📝 今日のコンディション", "📊 自分のデータ"])
+    tab1, tab2 = st.tabs(["📝 デイリーコンディション入力", "📊 自分のデータ"])
 
     with tab1:
         st.subheader("今日の体調を入力")
-        with st.form("daily_input"):
-            c1, c2 = st.columns(2)
-            with c1:
-                in_w = st.number_input("今日の体重 (kg)", value=float(my_info['weight']), step=0.1)
-                in_inj = st.radio("怪我・痛み", ["なし", "あり"], horizontal=True)
-                in_inj_dt = st.text_input("痛みの詳細 (部位など)") if in_inj == "あり" else ""
-            with c2:
-                in_fat = st.slider("疲労度 (1:元気 - 5:限界)", 1, 5, 3)
-                in_slp = st.slider("睡眠の質 (1:悪い - 5:最高)", 1, 5, 3)
-            
-            # ★修正箇所: ボタンは必ずフォーム内
-            submitted_daily = st.form_submit_button("送信する", use_container_width=True)
-            
-            if submitted_daily:
-                data = {
-                    "player_name": st.session_state.user_name,
-                    "date": str(date.today()),
-                    "weight": in_w, "fatigue": in_fat, "sleep": in_slp,
-                    "injury": in_inj, "injury_detail": in_inj_dt
-                }
-                try:
-                    supabase.table("conditions").insert(data).execute()
-                    st.success("体調を記録しました！お疲れ様です。")
-                except Exception as e:
-                    st.error(f"送信エラー: {e}")
+        c1, c2 = st.columns(2)
+        with c1:
+            in_w = st.number_input("今日の体重 (kg)", value=float(my_info['weight']), step=0.1)
+            in_inj = st.radio("怪我・痛み", ["なし", "あり"], horizontal=True, key="injury_radio")
+            in_inj_dt = st.text_input("痛みの詳細") if in_inj == "あり" else ""
+        with c2:
+            in_fat = st.slider("疲労度 (1:元気 - 5:限界)", 1, 5, 3)
+            in_slp = st.slider("睡眠の質 (1:悪い - 5:最高)", 1, 5, 3)
+
+        if st.button("送信する", use_container_width=True):
+            data = {"player_name": st.session_state.user_name, "date": str(date.today()), "weight": in_w, "fatigue": in_fat, "sleep": in_slp, "injury": in_inj, "injury_detail": in_inj_dt}
+            supabase.table("conditions").insert(data).execute()
+            st.success("記録しました！")
 
     with tab2:
-        # 自分のデータをフィルタリング
         my_cond = df_cond[df_cond["player_name"] == st.session_state.user_name].sort_values("date") if not df_cond.empty else pd.DataFrame()
-        
         if not my_cond.empty:
-            st.markdown("#### 体調の変化")
-            st.plotly_chart(px.line(my_cond, x="date", y=["fatigue", "sleep"], range_y=[0,6], markers=True))
+            my_cond_plot = my_cond.rename(columns={"fatigue": "疲労度", "sleep": "睡眠の質", "weight": "体重"})
+            st.markdown("#### コンディション推移")
+            st.plotly_chart(px.line(my_cond_plot, x="date", y=["疲労度", "睡眠の質"], range_y=[0,6], markers=True, color_discrete_map=COLOR_MAP), use_container_width=True)
             
-            # 最新の体重
+            st.markdown("#### 体重推移")
+            st.plotly_chart(px.line(my_cond_plot, x="date", y="体重", markers=True), use_container_width=True)
+            
+            # --- 目標体重比較 ---
             last_w = my_cond.iloc[-1]["weight"]
-            diff = last_w - my_info['weight']
-            st.metric("最新体重", f"{last_w} kg", delta=f"{diff:.1f} kg")
+            height_m = my_info['height'] / 100
+            target_w = round(height_m ** 2 * 22, 1)
+            
+            m1, m2 = st.columns(2)
+            with m1:
+                st.metric("最新体重", f"{last_w} kg", delta=f"{last_w - my_info['weight']:.1f} kg (前回比)")
+            with m2:
+                st.metric("目標体重 (BMI22)", f"{target_w} kg", delta=f"{last_w - target_w:.1f} kg (差分)", delta_color="off")
         else:
             st.info("まだ記録がありません")
