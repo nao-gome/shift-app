@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import os
+import time  # 【追加】メッセージを一定時間表示するためのライブラリ
 from datetime import date, datetime, timedelta
 import plotly.express as px
 import hashlib
@@ -42,66 +43,45 @@ def calculate_bmi(height_cm, weight_kg):
 def calculate_streak(player_name, df_cond):
     if df_cond.empty or "player_name" not in df_cond.columns:
         return 0
-    
     p_cond = df_cond[df_cond["player_name"] == player_name]
-    if p_cond.empty:
-        return 0
-        
+    if p_cond.empty: return 0
     input_dates = set(pd.to_datetime(p_cond["date"]).dt.date)
     today = date.today()
-    
     streak = 0
     check_date = today
-    
     for _ in range(100):
         if check_date.weekday() in [0, 5, 6]:
             check_date -= timedelta(days=1)
             continue
-            
-        if check_date in input_dates:
-            streak += 1
+        if check_date in input_dates: streak += 1
         else:
-            if check_date != today:
-                break
-                
+            if check_date != today: break
         check_date -= timedelta(days=1)
-        
     return streak
 
 # フィジカルテストのスコア化
 def calculate_physical_score(player_name, df_phys):
-    if df_phys.empty or "test_name" not in df_phys.columns:
-        return pd.DataFrame()
-
+    if df_phys.empty or "test_name" not in df_phys.columns: return pd.DataFrame()
     latest_phys = df_phys.sort_values("date").drop_duplicates(subset=["player_name", "test_name"], keep="last")
-    
     scores = []
     for test in PHYS_TESTS:
         test_data = latest_phys[latest_phys["test_name"] == test]
         if test_data.empty: continue
-            
         p_data = test_data[test_data["player_name"] == player_name]
         if p_data.empty: continue
-            
         p_val = float(p_data.iloc[0]["value"])
         max_val = float(test_data["value"].max())
         min_val = float(test_data["value"].min())
-        
-        if max_val == min_val:
-            score = 70
+        if max_val == min_val: score = 70
         else:
-            if "秒" in test:
-                score = 100 * (max_val - p_val) / (max_val - min_val)
-            else:
-                score = 100 * (p_val - min_val) / (max_val - min_val)
-        
+            if "秒" in test: score = 100 * (max_val - p_val) / (max_val - min_val)
+            else: score = 100 * (p_val - min_val) / (max_val - min_val)
         score = max(20, min(100, int(score)))
         short_name = test.replace(" (秒)", "").replace(" (cm)", "").replace(" (m)", "")
         scores.append({"テスト": short_name, "スコア": score, "実数値": p_val, "単位": test.split()[-1] if " " in test else ""})
-        
     return pd.DataFrame(scores)
 
-# 選手画像アップロード
+# アップロード関連
 def upload_image_to_supabase(file, prefix="player"):
     try:
         timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
@@ -116,16 +96,11 @@ def upload_image_to_supabase(file, prefix="player"):
         st.error(f"画像アップロードエラー: {e}")
         return None
 
-# ドキュメント(PDF等)アップロード【修正版】
 def upload_document_to_supabase(file):
     try:
         timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
-        # 元のファイル名から拡張子（.pdfなど）だけを抽出する
         ext = os.path.splitext(file.name)[1]
-        
-        # 日本語エラーを回避するため、「doc_タイムスタンプ.pdf」という完全な英数ファイル名に変換して保存
         safe_file_name = f"doc_{timestamp}{ext}"
-        
         bucket_name = "club_documents"
         file_bytes = file.getvalue()
         supabase.storage.from_(bucket_name).upload(safe_file_name, file_bytes, {"content-type": file.type, "upsert": "true"})
@@ -135,7 +110,7 @@ def upload_document_to_supabase(file):
     except Exception as e:
         st.error(f"ファイルアップロードエラー: {e}")
         return None
-    
+
 def show_player_image(image_val, width=120):
     if not image_val:
         st.write("No Image")
@@ -149,34 +124,22 @@ st.markdown("""
     <style>
     header[data-testid="stHeader"] { display: none !important; }
     section[data-testid="stSidebar"] { display: none; }
-    
-    .full-width-header {
-        background-color: #01579b; color: white; padding: 20px; margin-bottom: 10px;
-        display: flex; justify-content: center; align-items: center; border-radius: 0 0 15px 15px;
-    }
-    .profile-container {
-        display: flex; background-color: #f8f9fa; padding: 20px; border-radius: 15px;
-        border-left: 10px solid #01579b; margin-bottom: 20px; align-items: center; gap: 20px;
-    }
-    .profile-photo {
-        width: 120px; height: 120px; border-radius: 50%; overflow: hidden;
-        background-color: #eee; border: 3px solid #fff; flex-shrink: 0;
-        display: flex; justify-content: center; align-items: center;
-    }
+    .full-width-header { background-color: #01579b; color: white; padding: 20px; margin-bottom: 10px; display: flex; justify-content: center; align-items: center; border-radius: 0 0 15px 15px; }
+    .profile-container { display: flex; background-color: #f8f9fa; padding: 20px; border-radius: 15px; border-left: 10px solid #01579b; margin-bottom: 20px; align-items: center; gap: 20px; }
+    .profile-photo { width: 120px; height: 120px; border-radius: 50%; overflow: hidden; background-color: #eee; border: 3px solid #fff; flex-shrink: 0; display: flex; justify-content: center; align-items: center; }
     .profile-photo img { width: 100%; height: 100%; object-fit: cover; }
-    
     div[data-testid="stExpander"] details summary p { font-weight: bold; }
-    
-    .doc-link-btn {
-        display: inline-block; padding: 10px 20px; background-color: #ff9900; color: white;
-        text-decoration: none; border-radius: 5px; font-weight: bold; margin-top: 10px;
-    }
+    .doc-link-btn { display: inline-block; padding: 10px 20px; background-color: #ff9900; color: white; text-decoration: none; border-radius: 5px; font-weight: bold; margin-top: 10px; }
     .doc-link-btn:hover { background-color: #e68a00; color: white; }
+    .rehab-alert { background-color: #fff3cd; color: #856404; padding: 15px; border-left: 6px solid #ffeeba; border-radius: 5px; margin-bottom: 20px; }
+    @media print { .stTabs { display: none; } .stButton { display: none; } header { display: none; } .full-width-header { border-radius: 0; } }
+    .portfolio-box { border: 2px solid #01579b; padding: 20px; border-radius: 10px; margin-bottom: 20px; background-color: white; }
     </style>
     """, unsafe_allow_html=True)
 
 COLOR_MAP = {"睡眠の質": "#1f77b4", "疲労度": "#d62728"}
 PHYS_TESTS = ["30mスプリント (秒)", "プロアジリティ (秒)", "垂直跳び (cm)", "Yo-Yoテスト (m)"]
+REHAB_PHASES = ["初期治療 (RICE等)", "患部外トレーニング", "ジョグ・基礎フィジカル", "部分合流 (対人なし)", "完全合流 (対人あり)"]
 
 if "authenticated" not in st.session_state: st.session_state.authenticated = False
 if "user_role" not in st.session_state: st.session_state.user_role = None
@@ -186,12 +149,11 @@ if "user_name" not in st.session_state: st.session_state.user_name = None
 if not st.session_state.authenticated:
     st.markdown('<div class="full-width-header"><h1>⚽ LOGIN</h1></div>', unsafe_allow_html=True)
     with st.container(border=True):
-        login_type = st.radio("ログイン種別を選択してください", ["選手", "保護者", "管理者"], horizontal=True)
+        login_type = st.radio("ログイン種別を選択してください", ["選手", "保護者", "管理者", "トレーナー"], horizontal=True)
         
-        if login_type == "管理者":
-            u_id = st.text_input("管理者ID", value="admin")
-        else:
-            u_id = st.text_input("選手の名前 (Name)")
+        if login_type == "管理者": u_id = st.text_input("管理者ID", value="admin")
+        elif login_type == "トレーナー": u_id = st.text_input("トレーナーID", value="trainer")
+        else: u_id = st.text_input("選手の名前 (Name)")
             
         u_pw = st.text_input("パスワード", type="password")
         
@@ -202,8 +164,14 @@ if not st.session_state.authenticated:
                     st.session_state.user_role = "admin"
                     st.session_state.user_name = "管理者"
                     st.rerun()
-                else: 
-                    st.error("管理者IDまたはパスワードが違います")
+                else: st.error("管理者IDまたはパスワードが違います")
+            elif login_type == "トレーナー":
+                if u_id == "trainer" and u_pw == st.secrets.get("trainer_password", "trainer123"):
+                    st.session_state.authenticated = True
+                    st.session_state.user_role = "trainer"
+                    st.session_state.user_name = "トレーナー"
+                    st.rerun()
+                else: st.error("トレーナーIDまたはパスワードが違います")
             else:
                 h_pw = hash_password(u_pw)
                 try:
@@ -213,19 +181,15 @@ if not st.session_state.authenticated:
                         st.session_state.user_role = "parent" if login_type == "保護者" else "player"
                         st.session_state.user_name = u_id
                         st.rerun()
-                    else: 
-                        st.error("名前またはパスワードが違います")
-                except Exception as e: 
-                    st.error(f"ログインエラー: {e}")
+                    else: st.error("名前またはパスワードが違います")
+                except Exception as e: st.error(f"ログインエラー: {e}")
     st.stop()
 
 # --- 5. メイン画面 ---
-if st.session_state.user_role == "admin":
-    header_text = f"⚽ {st.session_state.user_name} モード"
-elif st.session_state.user_role == "parent":
-    header_text = f"⚽ {st.session_state.user_name} 選手の保護者ページ"
-else:
-    header_text = f"⚽ {st.session_state.user_name} モード"
+if st.session_state.user_role == "admin": header_text = f"⚽ {st.session_state.user_name} モード"
+elif st.session_state.user_role == "trainer": header_text = f"⚽ メディカル・トレーナー ルーム"
+elif st.session_state.user_role == "parent": header_text = f"⚽ {st.session_state.user_name} 選手の保護者ページ"
+else: header_text = f"⚽ {st.session_state.user_name} モード"
 
 st.markdown(f'<div class="full-width-header"><h1>{header_text}</h1></div>', unsafe_allow_html=True)
 
@@ -243,10 +207,101 @@ df_players = fetch_table_as_df("players")
 df_cond = fetch_table_as_df("conditions")
 df_phys = fetch_table_as_df("physical_tests")
 df_tactics = fetch_table_as_df("tactics_board") 
+df_injury = fetch_table_as_df("injury_reports") 
+df_rehab = fetch_table_as_df("rehab_plans")     
+
+# ========== トレーナーモード ==========
+if st.session_state.user_role == "trainer":
+    tabs = st.tabs(["🏥 故障者登録", "📋 週次リハビリ計画提出", "✅ 復帰・状況管理"])
+    
+    with tabs[0]:
+        st.subheader("🏥 新規故障者の登録")
+        with st.form("new_injury_form", clear_on_submit=True):
+            if not df_players.empty:
+                i_player = st.selectbox("選手を選択", df_players["name"].tolist())
+                i_name = st.text_input("診断名 / 怪我の部位 (例: 右足首捻挫)")
+                i_date = st.date_input("受傷日", date.today())
+                i_target = st.date_input("目標復帰日", date.today() + timedelta(days=14))
+                i_phase = st.selectbox("現在のフェーズ", REHAB_PHASES)
+                
+                # 【改修】送信メッセージの待機処理を追加
+                if st.form_submit_button("故障者リストに登録", use_container_width=True):
+                    if i_name:
+                        try:
+                            data = {"player_name": i_player, "injury_name": i_name, "injured_date": str(i_date), "target_return_date": str(i_target), "current_phase": i_phase, "is_active": True}
+                            supabase.table("injury_reports").insert(data).execute()
+                            st.success(f"✅ {i_player}選手を故障者リストに登録しました！")
+                            time.sleep(1.5) # 1.5秒待機してメッセージを見せる
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ 登録エラー: {e}")
+                    else: 
+                        st.error("❌ 診断名を入力してください。")
+
+    with tabs[1]:
+        st.subheader("📋 監督への「週次リハビリ計画」提出")
+        st.info("※ここで提出したメニューは、監督(Admin)が「承認」するまで選手には表示されません。")
+        if not df_injury.empty:
+            active_injuries = df_injury[df_injury["is_active"] == True]
+            if not active_injuries.empty:
+                with st.form("new_rehab_plan"):
+                    options = [f"{row['player_name']} - {row['injury_name']} (Phase: {row['current_phase']})" for _, row in active_injuries.iterrows()]
+                    selected_option = st.selectbox("対象の選手と怪我", options)
+                    selected_idx = options.index(selected_option)
+                    target_injury_id = int(active_injuries.iloc[selected_idx]["id"])
+                    
+                    r_week = st.date_input("対象週の開始日 (例: 今週の月曜日)", date.today())
+                    r_menu = st.text_area("今週のリハビリ・復帰メニュー詳細", height=150)
+                    r_comment = st.text_input("監督への連絡事項・所感")
+                    
+                    # 【改修】送信メッセージの待機処理を追加
+                    if st.form_submit_button("監督に提出する", type="primary", use_container_width=True):
+                        if r_menu:
+                            try:
+                                data = {"injury_id": target_injury_id, "target_week_start": str(r_week), "menu_description": r_menu, "trainer_comment": r_comment, "is_approved": False}
+                                supabase.table("rehab_plans").insert(data).execute()
+                                st.success("✅ 監督へ「週次リハビリ計画」の提出が完了しました！承認をお待ちください。")
+                                time.sleep(1.5) # 1.5秒待機してメッセージを見せる
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"❌ 提出に失敗しました: {e}")
+                        else: 
+                            st.error("❌ メニュー詳細を入力してください。")
+            else: st.write("現在、故障者リストに登録されている選手はいません。")
+
+    with tabs[2]:
+        st.subheader("✅ 現在の故障者リストとフェーズ更新")
+        if not df_injury.empty:
+            active_injuries = df_injury[df_injury["is_active"] == True]
+            for _, row in active_injuries.iterrows():
+                with st.expander(f"🏥 {row['player_name']} - {row['injury_name']} (復帰目標: {row['target_return_date']})"):
+                    st.write(f"**受傷日**: {row['injured_date']}")
+                    st.write(f"**現在のフェーズ**: {row['current_phase']}")
+                    
+                    new_phase = st.selectbox("フェーズを更新する", REHAB_PHASES, index=REHAB_PHASES.index(row['current_phase']), key=f"phase_{row['id']}")
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        if st.button("フェーズを更新", key=f"btn_phase_{row['id']}"):
+                            try:
+                                supabase.table("injury_reports").update({"current_phase": new_phase}).eq("id", row['id']).execute()
+                                st.success("✅ フェーズを更新しました。")
+                                time.sleep(1.0)
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"❌ 更新エラー: {e}")
+                    with col2:
+                        if st.button("🎉 復帰完了にする (リストから外す)", key=f"btn_clear_{row['id']}", type="primary"):
+                            try:
+                                supabase.table("injury_reports").update({"is_active": False}).eq("id", row['id']).execute()
+                                st.success("🎉 復帰完了！リストから外しました。")
+                                time.sleep(1.5)
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"❌ エラー: {e}")
 
 # ========== 管理者モード ==========
-if st.session_state.user_role == "admin":
-    tabs = st.tabs(["📋 名簿・編集", "👤 新規登録", "📈 分析", "💊 代行入力", "🏆 ランキング", "⏱️ テスト入力", "🎬 戦術 / 📄 資料"])
+elif st.session_state.user_role == "admin":
+    tabs = st.tabs(["📋 名簿・編集", "👤 新規登録", "📈 分析", "💊 代行入力", "🏆 ランキング", "⏱️ テスト入力", "🎬 戦術 / 📄 資料", "🏥 リハビリ承認"])
 
     with tabs[0]:
         st.subheader("選手情報の編集・更新")
@@ -277,7 +332,8 @@ if st.session_state.user_role == "admin":
                                     if url: update_data["image_url"] = url
                                     else: st.stop()
                                 supabase.table("players").update(update_data).eq("id", row['id']).execute()
-                                st.success(f"{e_name} 選手の情報を更新しました！")
+                                st.success(f"✅ {e_name} 選手の情報を更新しました！")
+                                time.sleep(1.0)
                                 st.rerun()
                             except Exception as e: st.error(f"更新エラー: {e}")
                     with st.expander("🗑️ 削除メニュー（注意）"):
@@ -298,7 +354,8 @@ if st.session_state.user_role == "admin":
                     url = upload_image_to_supabase(n_img, prefix=f"player_{n_num}") if n_img else ""
                     data = {"name": n_name, "number": n_num, "position": n_pos, "height": n_h, "weight": n_w, "password_hash": hash_password(n_pw), "image_url": url}
                     supabase.table("players").insert(data).execute()
-                    st.success(f"{n_name} を新規登録しました！")
+                    st.success(f"✅ {n_name} を新規登録しました！")
+                    time.sleep(1.0)
                     st.rerun()
 
     with tabs[2]:
@@ -345,7 +402,7 @@ if st.session_state.user_role == "admin":
                     p_f, p_s = st.slider("疲労", 1, 5, 3), st.slider("睡眠", 1, 5, 3)
                 if st.button("代行保存", use_container_width=True):
                     supabase.table("conditions").insert({"player_name": p_t, "date": str(date.today()), "weight": p_w, "fatigue": p_f, "sleep": p_s, "injury": p_i, "injury_detail": p_id}).execute()
-                    st.success("保存完了")
+                    st.success("✅ 保存完了")
 
     with tabs[4]:
         st.subheader("🏆 フィジカルランキング")
@@ -367,9 +424,10 @@ if st.session_state.user_role == "admin":
                 t_d = st.date_input("測定日", date.today())
                 if st.form_submit_button("保存"):
                     supabase.table("physical_tests").insert({"player_name": t_p, "test_name": t_n, "value": t_v, "date": str(t_d)}).execute()
-                    st.success("完了")
+                    st.success("✅ 完了")
+                    time.sleep(1.0)
+                    st.rerun()
                     
-    # 【改修】管理者の戦術/資料共有タブ
     with tabs[6]:
         st.subheader("🎬 戦術動画 / 📄 保護者向け資料 の共有")
         st.info("選手には「戦術」カテゴリーが、保護者には「保護者向け資料」カテゴリーだけが表示されます。")
@@ -391,9 +449,7 @@ if st.session_state.user_role == "admin":
                 else:
                     media_link = ""
                     m_type = ""
-                    
                     if t_file:
-                        # ファイルがアップロードされた場合
                         uploaded_url = upload_document_to_supabase(t_file)
                         if uploaded_url:
                             media_link = uploaded_url
@@ -401,13 +457,13 @@ if st.session_state.user_role == "admin":
                         else:
                             st.stop()
                     else:
-                        # URLが入力された場合
                         media_link = t_url
                         m_type = "youtube"
 
                     data = {"title": t_title, "category": t_cat, "description": t_desc, "media_url": media_link, "media_type": m_type}
                     supabase.table("tactics_board").insert(data).execute()
-                    st.success("共有が完了しました！")
+                    st.success("✅ 共有が完了しました！")
+                    time.sleep(1.0)
                     st.rerun()
         
         st.divider()
@@ -427,6 +483,35 @@ if st.session_state.user_role == "admin":
         else:
             st.info("現在共有されているコンテンツはありません。")
 
+    with tabs[7]:
+        st.subheader("🏥 トレーナーからの「リハビリ計画」承認待ち一覧")
+        if not df_rehab.empty and not df_injury.empty:
+            pending_plans = df_rehab[df_rehab["is_approved"] == False]
+            if not pending_plans.empty:
+                for i, plan in pending_plans.iterrows():
+                    inj_info = df_injury[df_injury["id"] == plan["injury_id"]]
+                    if not inj_info.empty:
+                        inj = inj_info.iloc[0]
+                        with st.expander(f"⚠️ 承認待ち: {inj['player_name']} - {inj['injury_name']} (対象週: {plan['target_week_start']})", expanded=True):
+                            st.write(f"**現在のフェーズ**: {inj['current_phase']} | **復帰目標**: {inj['target_return_date']}")
+                            st.markdown(f"**📝 トレーナーからの連絡**:\n{plan['trainer_comment']}")
+                            st.markdown(f"**🏃‍♂️ メニュー詳細**:\n{plan['menu_description']}")
+                            
+                            st.markdown("---")
+                            # 【改修】承認メッセージの待機処理を追加
+                            if st.button("✅ この計画を承認して選手に公開する", key=f"approve_{plan['id']}", type="primary"):
+                                try:
+                                    supabase.table("rehab_plans").update({"is_approved": True}).eq("id", plan['id']).execute()
+                                    st.success(f"✅ {inj['player_name']} 選手の計画を承認しました！選手・保護者の画面に反映されます。")
+                                    time.sleep(1.5)
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"❌ 承認エラー: {e}")
+            else:
+                st.info("現在、トレーナーから上がってきている承認待ちの計画はありません。")
+        else:
+            st.info("データがありません。")
+
 # ========== 選手 / 保護者モード ==========
 else:
     if st.session_state.user_role == "player" and st.session_state.get("just_submitted", False):
@@ -437,12 +522,35 @@ else:
     my_info = df_players[df_players["name"] == st.session_state.user_name].iloc[0]
     img_val = my_info.get("image_url")
     img_src = img_val if (img_val and str(img_val).startswith("http")) else "https://via.placeholder.com/150"
-    
     bmi_val = calculate_bmi(my_info['height'], my_info['weight'])
     streak_count = calculate_streak(st.session_state.user_name, df_cond)
-    
     streak_color = "#ff4b4b" if streak_count >= 3 else "#ff9900" if streak_count > 0 else "gray"
     streak_text = f"🔥 {streak_count}日連続入力中！(火〜金)" if streak_count > 0 else "連続入力: 0日 (今日からスタート！)"
+
+    is_injured = False
+    if not df_injury.empty:
+        my_injuries = df_injury[(df_injury["player_name"] == st.session_state.user_name) & (df_injury["is_active"] == True)]
+        if not my_injuries.empty:
+            is_injured = True
+            current_inj = my_injuries.iloc[0]
+            
+            st.markdown(f"""
+            <div class="rehab-alert">
+                <h3 style="margin-top:0;">🏥 現在リハビリプログラム進行中</h3>
+                <b>診断名</b>: {current_inj['injury_name']} <br>
+                <b>現在のフェーズ</b>: {current_inj['current_phase']} <br>
+                <b>目標復帰日</b>: {current_inj['target_return_date']}
+            </div>
+            """, unsafe_allow_html=True)
+            
+            if not df_rehab.empty:
+                my_plans = df_rehab[(df_rehab["injury_id"] == current_inj["id"]) & (df_rehab["is_approved"] == True)].sort_values("target_week_start", ascending=False)
+                if not my_plans.empty:
+                    latest_plan = my_plans.iloc[0]
+                    with st.expander(f"✅ 今週のメニュー (対象週: {latest_plan['target_week_start']} ~) ※監督承認済", expanded=True):
+                        st.markdown(f"**🏃‍♂️ トレーナーからのメニュー詳細**:\n\n{latest_plan['menu_description']}")
+                else:
+                    st.info("※現在、監督承認済みの今週のメニューはありません。トレーナーの更新をお待ちください。")
 
     st.markdown(f"""
     <div class="profile-container">
@@ -455,17 +563,20 @@ else:
     </div>
     """, unsafe_allow_html=True)
 
+    my_cond = pd.DataFrame()
+    if not df_cond.empty and "player_name" in df_cond.columns:
+        my_cond = df_cond[df_cond["player_name"] == st.session_state.user_name].sort_values("date")
+        
     if st.session_state.user_role == "player":
-        # 選手用タブ構成
-        tab1, tab2, tab3, tab4, tab5 = st.tabs(["📝 入力", "📊 履歴", "🔥 パラメーター", "🔐 PW", "🎬 戦術ボード"])
+        tabs_player = st.tabs(["📝 入力", "📊 履歴", "🔥 パラメーター", "🔐 PW", "🎬 戦術ボード", "🎓 ポートフォリオ"])
+        tab_in, tab_hist, tab_param, tab_pw, tab_tac, tab_port = tabs_player[0], tabs_player[1], tabs_player[2], tabs_player[3], tabs_player[4], tabs_player[5]
     else:
         st.info("💡 保護者モードではデータの閲覧のみ可能です。毎日のコンディション入力は選手本人の画面から行われます。")
-        # 保護者用タブ構成
-        tab2, tab3, tab5 = st.tabs(["📊 コンディション履歴", "🔥 パラメーター", "📄 お便り・資料"])
+        tabs_parent = st.tabs(["📊 コンディション履歴", "🔥 パラメーター", "📄 お便り・資料", "🎓 ポートフォリオ"])
+        tab_hist, tab_param, tab_tac, tab_port = tabs_parent[0], tabs_parent[1], tabs_parent[2], tabs_parent[3]
 
-    # --- 選手用: コンディション入力 ---
     if st.session_state.user_role == "player":
-        with tab1:
+        with tab_in:
             with st.container(border=True):
                 c1, c2 = st.columns(2)
                 with c1:
@@ -486,12 +597,7 @@ else:
                     st.session_state["just_submitted"] = True
                     st.rerun()
 
-    # --- 共通: 履歴タブ ---
-    with tab2:
-        my_cond = pd.DataFrame()
-        if not df_cond.empty and "player_name" in df_cond.columns:
-            my_cond = df_cond[df_cond["player_name"] == st.session_state.user_name].sort_values("date")
-            
+    with tab_hist:
         if not my_cond.empty:
             if len(my_cond) >= 2:
                 curr, prev = my_cond.iloc[-1], my_cond.iloc[-2]
@@ -515,51 +621,38 @@ else:
             st.markdown("<br>", unsafe_allow_html=True)
             progress_val = min(last_w / target_w, 1.0) if target_w > 0 else 0.0
             progress_percent = progress_val * 100
-            
             st.markdown(f"**🎯 目標体重までの達成度: {progress_percent:.1f}%**")
             st.progress(progress_val)
-            
-            if progress_val >= 1.0:
-                st.success("🎉 目標体重クリア！素晴らしいフィジカルです！")
+            if progress_val >= 1.0: st.success("🎉 目標体重クリア！素晴らしいフィジカルです！")
+        else: st.info("データがまだありません。")
 
-        else: 
-            st.info("データがまだありません。")
-
-    # --- 共通: パラメーター ---
-    with tab3:
+    df_radar = calculate_physical_score(st.session_state.user_name, df_phys)
+    with tab_param:
         st.subheader("🔥 身体能力パラメーター")
         st.caption("※チーム内の成績をもとにした相対評価（0〜100）です。")
-        
-        df_radar = calculate_physical_score(st.session_state.user_name, df_phys)
         if not df_radar.empty and len(df_radar) >= 3:
             fig = px.line_polar(df_radar, r='スコア', theta='テスト', line_close=True, range_r=[0, 100])
             fig.update_traces(fill='toself', line_color='#00FFAA', fillcolor='rgba(0, 255, 170, 0.4)')
             st.plotly_chart(fig, use_container_width=True)
-            
             st.markdown("#### 🏃‍♂️ 最新記録")
             st.dataframe(df_radar[["テスト", "実数値", "単位"]], hide_index=True, use_container_width=True)
         elif not df_radar.empty:
             st.info("レーダーチャートを表示するには、あと少しテスト項目が必要です！")
             st.dataframe(df_radar[["テスト", "実数値", "単位"]], hide_index=True)
-        else:
-            st.info("まだフィジカルテストの記録がありません。測定日をお楽しみに！")
+        else: st.info("まだフィジカルテストの記録がありません。測定日をお楽しみに！")
 
-    # --- 選手用: パスワード変更 ---
     if st.session_state.user_role == "player":
-        with tab4:
+        with tab_pw:
             with st.form("pw_form"):
                 curr_pw, new_pw = st.text_input("現在のパスワード", type="password"), st.text_input("新しいパスワード", type="password")
                 if st.form_submit_button("更新"):
                     if hash_password(curr_pw) == my_info['password_hash'] and len(new_pw) >= 4:
                         supabase.table("players").update({"password_hash": hash_password(new_pw)}).eq("id", my_info['id']).execute()
                         st.success("完了！")
-                    else: 
-                        st.error("不備あり")
+                    else: st.error("不備あり")
                         
-    # --- 【出し分け】戦術ルーム (選手) / お便り (保護者) ---
-    with tab5:
+    with tab_tac:
         if not df_tactics.empty:
-            # 選手なら「保護者向け資料」以外を表示。保護者なら「保護者向け資料」だけを表示。
             if st.session_state.user_role == "player":
                 st.subheader("🎬 戦術＆スカウティングボード")
                 display_data = df_tactics[df_tactics["category"] != "保護者向け資料 (PDF/画像)"]
@@ -573,18 +666,55 @@ else:
                         if row['description']:
                             st.markdown(f"**📝 コメント:**\n\n{row['description']}")
                             st.markdown("<br>", unsafe_allow_html=True)
-                        
-                        # ファイル形式に応じた表示
                         if row['media_type'] == "document":
                             st.markdown(f"<a href='{row['media_url']}' target='_blank' class='doc-link-btn'>📄 {row['title']} を開く</a>", unsafe_allow_html=True)
                         elif "youtube.com" in row['media_url'] or "youtu.be" in row['media_url']:
                             st.video(row['media_url'])
-                        else:
-                            st.write(row['media_url'])
+                        else: st.write(row['media_url'])
             else:
-                if st.session_state.user_role == "player":
-                    st.info("現在共有されている戦術映像はありません。")
-                else:
-                    st.info("現在共有されている資料はありません。")
-        else:
-            st.info("現在共有されているコンテンツはありません。")
+                if st.session_state.user_role == "player": st.info("現在共有されている戦術映像はありません。")
+                else: st.info("現在共有されている資料はありません。")
+        else: st.info("現在共有されているコンテンツはありません。")
+
+    with tab_port:
+        st.info("💡 スマートフォンやPCのブラウザ機能から「印刷」→「PDFとして保存」を選択すると、進路活動などの提出用資料として美しく出力できます。")
+        st.markdown(f"""
+        <div class="portfolio-box">
+            <h2 style='text-align: center; color: #01579b;'>Tough & Elegant<br>アスリート成長ポートフォリオ</h2>
+            <hr>
+            <h3>👤 基本情報</h3>
+            <ul>
+                <li><b>氏名</b>: {my_info['name']} (背番号: {my_info['number']})</li>
+                <li><b>ポジション</b>: {my_info['position']}</li>
+                <li><b>現在の体格</b>: 身長 {my_info['height']}cm / 体重 {my_info['weight']}kg (BMI: {bmi_val})</li>
+            </ul>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        total_inputs = len(my_cond) if not my_cond.empty else 0
+        avg_sleep = round(my_cond['sleep'].mean(), 1) if not my_cond.empty else "-"
+        avg_fatigue = round(my_cond['fatigue'].mean(), 1) if not my_cond.empty else "-"
+        
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("<div class='portfolio-box'>", unsafe_allow_html=True)
+            st.markdown("### 📝 自己管理力 (Self-Management)")
+            st.write(f"毎日のコンディションをシステムに入力し、自身の身体と向き合う能力（Elegant）の証明です。")
+            st.metric("総入力日数", f"{total_inputs} 日")
+            st.metric("現在の連続入力（ストリーク）", f"{streak_count} 日")
+            st.write(f"**平均睡眠スコア**: {avg_sleep} / 5.0")
+            st.write(f"**平均疲労スコア**: {avg_fatigue} / 5.0")
+            st.markdown("</div>", unsafe_allow_html=True)
+            
+        with c2:
+            st.markdown("<div class='portfolio-box'>", unsafe_allow_html=True)
+            st.markdown("### 🏃‍♂️ 身体能力 (Physical Performance)")
+            st.write("クラブ内での相対的なフィジカル能力（Tough）を可視化したデータです。")
+            if not df_radar.empty and len(df_radar) >= 3:
+                fig_port = px.line_polar(df_radar, r='スコア', theta='テスト', line_close=True, range_r=[0, 100])
+                fig_port.update_traces(fill='toself', line_color='#01579b', fillcolor='rgba(1, 87, 155, 0.3)')
+                fig_port.update_layout(margin=dict(l=20, r=20, t=20, b=20), height=300)
+                st.plotly_chart(fig_port, use_container_width=True)
+            elif not df_radar.empty: st.dataframe(df_radar[["テスト", "実数値", "単位"]], hide_index=True)
+            else: st.write("※データ計測待ち")
+            st.markdown("</div>", unsafe_allow_html=True)
