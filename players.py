@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import os
-import time  # 【追加】メッセージを一定時間表示するためのライブラリ
+import time
 from datetime import date, datetime, timedelta
 import plotly.express as px
 import hashlib
@@ -39,7 +39,6 @@ def calculate_bmi(height_cm, weight_kg):
         return round(weight_kg / (height_m ** 2), 1)
     return 0
 
-# ストリーク（連続入力）計算関数（火〜金のみカウント）
 def calculate_streak(player_name, df_cond):
     if df_cond.empty or "player_name" not in df_cond.columns:
         return 0
@@ -59,7 +58,6 @@ def calculate_streak(player_name, df_cond):
         check_date -= timedelta(days=1)
     return streak
 
-# フィジカルテストのスコア化
 def calculate_physical_score(player_name, df_phys):
     if df_phys.empty or "test_name" not in df_phys.columns: return pd.DataFrame()
     latest_phys = df_phys.sort_values("date").drop_duplicates(subset=["player_name", "test_name"], keep="last")
@@ -81,7 +79,6 @@ def calculate_physical_score(player_name, df_phys):
         scores.append({"テスト": short_name, "スコア": score, "実数値": p_val, "単位": test.split()[-1] if " " in test else ""})
     return pd.DataFrame(scores)
 
-# アップロード関連
 def upload_image_to_supabase(file, prefix="player"):
     try:
         timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
@@ -175,7 +172,9 @@ if not st.session_state.authenticated:
             else:
                 h_pw = hash_password(u_pw)
                 try:
-                    res = supabase.table("players").select("*").eq("name", u_id).eq("password_hash", h_pw).execute()
+                    pw_column = "parent_password_hash" if login_type == "保護者" else "password_hash"
+                    res = supabase.table("players").select("*").eq("name", u_id).eq(pw_column, h_pw).execute()
+                    
                     if res.data:
                         st.session_state.authenticated = True
                         st.session_state.user_role = "parent" if login_type == "保護者" else "player"
@@ -212,7 +211,8 @@ df_rehab = fetch_table_as_df("rehab_plans")
 
 # ========== トレーナーモード ==========
 if st.session_state.user_role == "trainer":
-    tabs = st.tabs(["🏥 故障者登録", "📋 週次リハビリ計画提出", "✅ 復帰・状況管理"])
+    # 【改修】トレーナーに「コンディション分析」タブを追加
+    tabs = st.tabs(["🏥 故障者登録", "📋 週次リハビリ計画提出", "✅ 復帰・状況管理", "📈 コンディション分析"])
     
     with tabs[0]:
         st.subheader("🏥 新規故障者の登録")
@@ -224,19 +224,17 @@ if st.session_state.user_role == "trainer":
                 i_target = st.date_input("目標復帰日", date.today() + timedelta(days=14))
                 i_phase = st.selectbox("現在のフェーズ", REHAB_PHASES)
                 
-                # 【改修】送信メッセージの待機処理を追加
                 if st.form_submit_button("故障者リストに登録", use_container_width=True):
                     if i_name:
                         try:
                             data = {"player_name": i_player, "injury_name": i_name, "injured_date": str(i_date), "target_return_date": str(i_target), "current_phase": i_phase, "is_active": True}
                             supabase.table("injury_reports").insert(data).execute()
                             st.success(f"✅ {i_player}選手を故障者リストに登録しました！")
-                            time.sleep(1.5) # 1.5秒待機してメッセージを見せる
+                            time.sleep(1.5)
                             st.rerun()
                         except Exception as e:
                             st.error(f"❌ 登録エラー: {e}")
-                    else: 
-                        st.error("❌ 診断名を入力してください。")
+                    else: st.error("❌ 診断名を入力してください。")
 
     with tabs[1]:
         st.subheader("📋 監督への「週次リハビリ計画」提出")
@@ -254,19 +252,17 @@ if st.session_state.user_role == "trainer":
                     r_menu = st.text_area("今週のリハビリ・復帰メニュー詳細", height=150)
                     r_comment = st.text_input("監督への連絡事項・所感")
                     
-                    # 【改修】送信メッセージの待機処理を追加
                     if st.form_submit_button("監督に提出する", type="primary", use_container_width=True):
                         if r_menu:
                             try:
                                 data = {"injury_id": target_injury_id, "target_week_start": str(r_week), "menu_description": r_menu, "trainer_comment": r_comment, "is_approved": False}
                                 supabase.table("rehab_plans").insert(data).execute()
-                                st.success("✅ 監督へ「週次リハビリ計画」の提出が完了しました！承認をお待ちください。")
-                                time.sleep(1.5) # 1.5秒待機してメッセージを見せる
+                                st.success("✅ 監督へ「週次リハビリ計画」の提出が完了しました！")
+                                time.sleep(1.5)
                                 st.rerun()
                             except Exception as e:
                                 st.error(f"❌ 提出に失敗しました: {e}")
-                        else: 
-                            st.error("❌ メニュー詳細を入力してください。")
+                        else: st.error("❌ メニュー詳細を入力してください。")
             else: st.write("現在、故障者リストに登録されている選手はいません。")
 
     with tabs[2]:
@@ -275,29 +271,50 @@ if st.session_state.user_role == "trainer":
             active_injuries = df_injury[df_injury["is_active"] == True]
             for _, row in active_injuries.iterrows():
                 with st.expander(f"🏥 {row['player_name']} - {row['injury_name']} (復帰目標: {row['target_return_date']})"):
-                    st.write(f"**受傷日**: {row['injured_date']}")
-                    st.write(f"**現在のフェーズ**: {row['current_phase']}")
-                    
+                    st.write(f"**受傷日**: {row['injured_date']} | **フェーズ**: {row['current_phase']}")
                     new_phase = st.selectbox("フェーズを更新する", REHAB_PHASES, index=REHAB_PHASES.index(row['current_phase']), key=f"phase_{row['id']}")
                     col1, col2 = st.columns(2)
                     with col1:
                         if st.button("フェーズを更新", key=f"btn_phase_{row['id']}"):
                             try:
                                 supabase.table("injury_reports").update({"current_phase": new_phase}).eq("id", row['id']).execute()
-                                st.success("✅ フェーズを更新しました。")
+                                st.success("✅ 更新完了")
                                 time.sleep(1.0)
                                 st.rerun()
                             except Exception as e:
                                 st.error(f"❌ 更新エラー: {e}")
                     with col2:
-                        if st.button("🎉 復帰完了にする (リストから外す)", key=f"btn_clear_{row['id']}", type="primary"):
+                        if st.button("🎉 復帰完了", key=f"btn_clear_{row['id']}", type="primary"):
                             try:
                                 supabase.table("injury_reports").update({"is_active": False}).eq("id", row['id']).execute()
-                                st.success("🎉 復帰完了！リストから外しました。")
+                                st.success("🎉 復帰完了！")
                                 time.sleep(1.5)
                                 st.rerun()
                             except Exception as e:
                                 st.error(f"❌ エラー: {e}")
+                                
+    # 【新規追加】トレーナー向けコンディション分析タブ
+    with tabs[3]:
+        st.subheader("⚠️ 要注意選手アラート (前日比)")
+        st.info("💡 トレーナーの視点で、疲労の急増や睡眠不足の選手をいち早くキャッチし、ケアの判断に役立ててください。")
+        if not df_cond.empty and "player_name" in df_cond.columns:
+            for p in df_cond["player_name"].unique():
+                d = df_cond[df_cond["player_name"] == p].sort_values("date")
+                if len(d) >= 2:
+                    c, pr = d.iloc[-1], d.iloc[-2]
+                    r = [k for k, v in {"疲労急増": c["fatigue"]-pr["fatigue"]>=3, "睡眠悪化": pr["sleep"]-c["sleep"]>=3, "体重急減": pr["weight"]-c["weight"]>=1.5}.items() if v]
+                    if r: st.error(f"**{p}**: {', '.join(r)}")
+            st.divider()
+            
+            st.subheader("👤 選手個別のコンディション推移")
+            if not df_players.empty:
+                target = st.selectbox("分析する選手を選択", df_players["name"].tolist(), key="trainer_cond_target")
+                p_cond = df_cond[df_cond["player_name"] == target].sort_values("date")
+                if not p_cond.empty:
+                    st.plotly_chart(px.line(p_cond.rename(columns={"fatigue":"疲労度","sleep":"睡眠の質","weight":"体重"}), x="date", y=["疲労度","睡眠の質"], markers=True, range_y=[0,6], color_discrete_map=COLOR_MAP), use_container_width=True)
+                    st.plotly_chart(px.line(p_cond.rename(columns={"weight":"体重"}), x="date", y="体重", markers=True), use_container_width=True)
+                else:
+                    st.write("この選手の記録はまだありません。")
 
 # ========== 管理者モード ==========
 elif st.session_state.user_role == "admin":
@@ -320,13 +337,18 @@ elif st.session_state.user_role == "admin":
                             e_pos = st.selectbox("ポジション", ["GK", "DF", "MF", "FW"], index=["GK", "DF", "MF", "FW"].index(row['position']))
                             e_height = st.number_input("身長 (cm)", value=float(row['height']), min_value=100.0, max_value=250.0, step=0.1)
                             e_weight = st.number_input("体重 (kg)", value=float(row['weight']), min_value=30.0, max_value=150.0, step=0.1)
-                            e_new_pw = st.text_input("新しいパスワード (変更する場合のみ)", type="password", key=f"pw_edit_{row['id']}")
+                            
+                            st.markdown("---")
+                            col_pw1, col_pw2 = st.columns(2)
+                            with col_pw1: e_new_pw = st.text_input("選手の新パスワード", type="password", help="変更する場合のみ入力", key=f"pw_edit_{row['id']}")
+                            with col_pw2: e_new_parent_pw = st.text_input("保護者の新パスワード", type="password", help="変更する場合のみ入力", key=f"parent_pw_edit_{row['id']}")
                             st.caption(f"現在のBMI: {bmi}")
 
                         if st.form_submit_button("情報を更新"):
                             try:
                                 update_data = {"name": e_name, "number": e_num, "position": e_pos, "height": e_height, "weight": e_weight}
                                 if e_new_pw: update_data["password_hash"] = hash_password(e_new_pw)
+                                if e_new_parent_pw: update_data["parent_password_hash"] = hash_password(e_new_parent_pw)
                                 if e_img:
                                     url = upload_image_to_supabase(e_img, prefix=f"player_{e_num}")
                                     if url: update_data["image_url"] = url
@@ -348,11 +370,22 @@ elif st.session_state.user_role == "admin":
             n_num = st.number_input("背番号", step=1, value=10)
             n_pos = st.selectbox("ポジション", ["GK", "DF", "MF", "FW"])
             n_h, n_w = st.number_input("身長 (cm)", 170.0), st.number_input("体重 (kg)", 60.0)
-            n_pw, n_img = st.text_input("初期パスワード", "1234"), st.file_uploader("写真 (jpg/png)")
+            
+            st.markdown("---")
+            col_npw1, col_npw2 = st.columns(2)
+            with col_npw1: n_pw = st.text_input("選手初期パスワード", "1234")
+            with col_npw2: n_parent_pw = st.text_input("保護者初期パスワード", "1234")
+            
+            n_img = st.file_uploader("写真 (jpg/png)")
             if st.form_submit_button("登録実行", use_container_width=True):
                 if n_name:
                     url = upload_image_to_supabase(n_img, prefix=f"player_{n_num}") if n_img else ""
-                    data = {"name": n_name, "number": n_num, "position": n_pos, "height": n_h, "weight": n_w, "password_hash": hash_password(n_pw), "image_url": url}
+                    data = {
+                        "name": n_name, "number": n_num, "position": n_pos, "height": n_h, "weight": n_w, 
+                        "password_hash": hash_password(n_pw),
+                        "parent_password_hash": hash_password(n_parent_pw),
+                        "image_url": url
+                    }
                     supabase.table("players").insert(data).execute()
                     st.success(f"✅ {n_name} を新規登録しました！")
                     time.sleep(1.0)
@@ -498,7 +531,6 @@ elif st.session_state.user_role == "admin":
                             st.markdown(f"**🏃‍♂️ メニュー詳細**:\n{plan['menu_description']}")
                             
                             st.markdown("---")
-                            # 【改修】承認メッセージの待機処理を追加
                             if st.button("✅ この計画を承認して選手に公開する", key=f"approve_{plan['id']}", type="primary"):
                                 try:
                                     supabase.table("rehab_plans").update({"is_approved": True}).eq("id", plan['id']).execute()
@@ -572,8 +604,8 @@ else:
         tab_in, tab_hist, tab_param, tab_pw, tab_tac, tab_port = tabs_player[0], tabs_player[1], tabs_player[2], tabs_player[3], tabs_player[4], tabs_player[5]
     else:
         st.info("💡 保護者モードではデータの閲覧のみ可能です。毎日のコンディション入力は選手本人の画面から行われます。")
-        tabs_parent = st.tabs(["📊 コンディション履歴", "🔥 パラメーター", "📄 お便り・資料", "🎓 ポートフォリオ"])
-        tab_hist, tab_param, tab_tac, tab_port = tabs_parent[0], tabs_parent[1], tabs_parent[2], tabs_parent[3]
+        tabs_parent = st.tabs(["📊 コンディション履歴", "🔥 パラメーター", "📄 お便り・資料", "🎓 ポートフォリオ", "🔐 PW"])
+        tab_hist, tab_param, tab_tac, tab_port, tab_pw = tabs_parent[0], tabs_parent[1], tabs_parent[2], tabs_parent[3], tabs_parent[4]
 
     if st.session_state.user_role == "player":
         with tab_in:
@@ -641,15 +673,16 @@ else:
             st.dataframe(df_radar[["テスト", "実数値", "単位"]], hide_index=True)
         else: st.info("まだフィジカルテストの記録がありません。測定日をお楽しみに！")
 
-    if st.session_state.user_role == "player":
-        with tab_pw:
-            with st.form("pw_form"):
-                curr_pw, new_pw = st.text_input("現在のパスワード", type="password"), st.text_input("新しいパスワード", type="password")
-                if st.form_submit_button("更新"):
-                    if hash_password(curr_pw) == my_info['password_hash'] and len(new_pw) >= 4:
-                        supabase.table("players").update({"password_hash": hash_password(new_pw)}).eq("id", my_info['id']).execute()
-                        st.success("完了！")
-                    else: st.error("不備あり")
+    with tab_pw:
+        with st.form("pw_form"):
+            curr_pw, new_pw = st.text_input("現在のパスワード", type="password"), st.text_input("新しいパスワード", type="password")
+            if st.form_submit_button("更新"):
+                # 保護者の場合は parent_password_hash を更新する
+                pw_column = "parent_password_hash" if st.session_state.user_role == "parent" else "password_hash"
+                if hash_password(curr_pw) == my_info[pw_column] and len(new_pw) >= 4:
+                    supabase.table("players").update({pw_column: hash_password(new_pw)}).eq("id", my_info['id']).execute()
+                    st.success("完了！")
+                else: st.error("現在のパスワードが間違っているか、新しいパスワードが短すぎます。")
                         
     with tab_tac:
         if not df_tactics.empty:
